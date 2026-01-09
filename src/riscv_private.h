@@ -186,7 +186,13 @@ struct riscv_internal {
     riscv_word_t X[N_RV_REGS];
     riscv_word_t PC;
 
+    uint64_t insn_counter[256];
     uint64_t timer; /* strictly increment timer */
+
+    uint64_t branch_taken_forward;
+    uint64_t branch_taken_backward;
+    uint64_t branch_untaken_forward;
+    uint64_t branch_untaken_backward;
 
 #if RV32_HAS(JIT) && RV32_HAS(SYSTEM)
     /*

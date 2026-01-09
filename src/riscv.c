@@ -562,6 +562,17 @@ riscv_t *rv_create(riscv_user_t rv_attr)
         return NULL;
     assert(rv);
 
+    
+    memset(rv->insn_counter, 0, sizeof(rv->insn_counter));
+    // To make sure the counter starts from zero before every executions, we need to clear it to zero before establishing the instance of emulator
+
+    // Initialize branch counter
+    rv->branch_taken_forward = 0;
+    rv->branch_taken_backward = 0;
+    rv->branch_untaken_forward = 0;
+    rv->branch_untaken_backward = 0;
+    // For consistency, we still initialize them as 0 here.
+
 #if RV32_HAS(SYSTEM_MMIO)
     /* register cleaning callback for CTRL+a+x exit */
     atexit(rv_async_block_clear);
@@ -1207,7 +1218,31 @@ static void profile(block_t *block, uint32_t freq, FILE *output_file)
 }
 #endif
 
-void rv_profile(riscv_t *rv, char *out_file_path)
+static const char *get_insn_group_color(uint8_t opcode)
+{
+    const char *color_load      = "\033[1;34m";
+    const char *color_store     = "\033[1;36m";
+    const char *color_arith    = "\033[1;32m";
+    const char *color_branch   = "\033[1;33m";
+    const char *color_mul_div  = "\033[1;31m";
+    const char *color_reset    = "\033[0m";
+
+    if (opcode >= rv_insn_lb && opcode <= rv_insn_lhu) return color_load;
+    if (opcode >= rv_insn_sb && opcode <= rv_insn_sw) return color_store;
+    if (opcode >= rv_insn_mul && opcode <= rv_insn_remu) return color_mul_div;
+    if ((opcode >= rv_insn_beq && opcode <= rv_insn_bgeu) || 
+         opcode == rv_insn_jal || opcode == rv_insn_jalr) {
+        return color_branch;
+    }
+    if (opcode == rv_insn_add || opcode == rv_insn_addi || 
+        opcode == rv_insn_sub || opcode == rv_insn_lui || 
+        opcode == rv_insn_auipc) {
+        return color_arith;
+    }
+    return color_reset;
+}
+
+void rv_profile(riscv_t *rv, char *out_file_path) ///
 {
     if (!out_file_path) {
         rv_log_warn("Profiling data output file is NULL");
@@ -1218,6 +1253,37 @@ void rv_profile(riscv_t *rv, char *out_file_path)
         rv_log_error("Cannot open profiling data output file");
         return;
     }
+
+    fprintf(f, "=== Instruction Execution Count Profile ===\n");
+    fprintf(f, "%-20s | %-15s\n", "Instruction", "Count");
+    fprintf(f, "-------------------------------------------\n");
+
+    for (int i = 0 ; i < N_RV_INSNS ; i++){
+        if (rv->insn_counter[i] > 0){
+            const char *color = get_insn_group_color(i);
+            const char *reset = "\033[0m";
+
+            fprintf(f, "%s%-20s%s | %-15lu\n", color, insn_name_table[i], reset, rv->insn_counter[i]);
+        }
+    }
+
+    for (int i = N_RV_INSNS ; i < N_RV_INSNS + 12; i++){
+        if (rv->insn_counter[i] > 0){
+            fprintf(f, "%-20s | %-15lu\n", insn_name_table[i], rv->insn_counter[i]);
+        }
+    }
+    fprintf(f, "==========================================\n\n");
+    
+    // Control-flow analysis
+    fprintf(f, "=== Branch Profiling (Dynamic Control Flow) ===\n");
+    fprintf(f, "%-30s | %-15s\n", "Branch Direction & Outcome", "Count");
+    fprintf(f, "-----------------------------------------------------------\n");
+    fprintf(f, "%-30s | %-15lu\n", "Taken Forward (e.g. if-else)", rv->branch_taken_forward);
+    fprintf(f, "%-30s | %-15lu\n", "Taken Backward (e.g. loop)", rv->branch_taken_backward);
+    fprintf(f, "%-30s | %-15lu\n", "Untaken Forward", rv->branch_untaken_forward);
+    fprintf(f, "%-30s | %-15lu\n", "Untaken Backward", rv->branch_untaken_backward);
+    fprintf(f, "===========================================================\n\n");
+
 #if RV32_HAS(JIT)
     fprintf(f,
             "PC start |PC end  | frequency |  hot  | loop  | untaken | taken | "
@@ -1227,7 +1293,7 @@ void rv_profile(riscv_t *rv, char *out_file_path)
     fprintf(f, "PC start |PC end  | untaken | taken  | IR list \n");
     block_map_t *map = &rv->block_map;
     for (uint32_t i = 0; i < map->block_capacity; i++) {
-        block_t *block = map->map[i];
+        block_t *block = map->map[i];       ///
         if (!block)
             continue;
         fprintf(f, "%#-9x|", block->pc_start);
@@ -1254,4 +1320,5 @@ void rv_profile(riscv_t *rv, char *out_file_path)
         fprintf(f, "\n");
     }
 #endif
+    fclose(f);
 }

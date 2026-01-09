@@ -624,6 +624,7 @@ static uint32_t peripheral_update_ctr = 64;
     {                                                                     \
         RVOP_SYNC_PC(rv, PC);                                             \
         IIF(RV32_HAS(SYSTEM))(rv->timer++;, ) cycle++;                    \
+        rv->insn_counter[ir->opcode]++;                                   \
         code;                                                             \
         IIF(RV32_HAS(SYSTEM))(                                            \
             if (need_handle_signal) {                                     \
@@ -693,6 +694,7 @@ static PRESERVE_NONE bool do_fuse1(riscv_t *rv,
                                    uint64_t cycle,
                                    uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += ir->imm2;
     opcode_fuse_t *fuse = ir->fuse;
@@ -708,6 +710,7 @@ static PRESERVE_NONE bool do_fuse2(riscv_t *rv,
                                    uint64_t cycle,
                                    uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += 2;
     rv->X[ir->rd] = ir->imm;
@@ -722,6 +725,7 @@ static PRESERVE_NONE bool do_fuse3(riscv_t *rv,
                                    uint64_t cycle,
                                    uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += ir->imm2;
     opcode_fuse_t *fuse = ir->fuse;
@@ -744,6 +748,7 @@ static PRESERVE_NONE bool do_fuse4(riscv_t *rv,
                                    uint64_t cycle,
                                    uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += ir->imm2;
     opcode_fuse_t *fuse = ir->fuse;
@@ -783,6 +788,7 @@ static PRESERVE_NONE bool do_fuse5(riscv_t *rv,
                                    uint64_t cycle,
                                    uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += ir->imm2;
     opcode_fuse_t *fuse = ir->fuse;
@@ -802,6 +808,7 @@ static PRESERVE_NONE bool do_fuse6(riscv_t *rv,
                                    uint64_t cycle,
                                    uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += 2;
     rv->X[rv_reg_a7] = ir->imm;
@@ -823,6 +830,7 @@ static PRESERVE_NONE bool do_fuse6(riscv_t *rv UNUSED,
                                    uint64_t cycle UNUSED,
                                    uint32_t PC UNUSED)
 {
+    rv->insn_counter[ir->opcode]++;
     assert(!"fuse6 should not be called in RV32E mode");
     return false;
 }
@@ -834,6 +842,7 @@ static PRESERVE_NONE bool do_fuse7(riscv_t *rv,
                                    uint64_t cycle,
                                    uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += ir->imm2;
     opcode_fuse_t *fuse = ir->fuse;
@@ -858,6 +867,7 @@ static PRESERVE_NONE bool do_fuse8(riscv_t *rv,
                                    uint64_t cycle,
                                    uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += 2;
     /* Cast to uint32_t to avoid signed overflow UB */
@@ -878,6 +888,7 @@ static PRESERVE_NONE bool do_fuse9(riscv_t *rv,
                                    uint64_t cycle,
                                    uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += 2;
     /* Write LUI result to rd - required when rd != LW destination.
@@ -904,6 +915,7 @@ static PRESERVE_NONE bool do_fuse10(riscv_t *rv,
                                     uint64_t cycle,
                                     uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += 2;
     /* Write LUI result to rd - SW doesn't write registers, so rd may be
@@ -935,6 +947,7 @@ static PRESERVE_NONE bool do_fuse11(riscv_t *rv,
                                     uint64_t cycle,
                                     uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += 2;
     uint32_t addr = rv->X[ir->rs1] + ir->imm;
@@ -963,6 +976,7 @@ static PRESERVE_NONE bool do_fuse12(riscv_t *rv,
                                     uint64_t cycle,
                                     uint32_t PC)
 {
+    rv->insn_counter[ir->opcode]++;
     RVOP_SYNC_PC(rv, PC);
     cycle += 2;
     rv->X[ir->rd] = rv->X[ir->rs1] + ir->imm;
