@@ -1218,29 +1218,29 @@ static void profile(block_t *block, uint32_t freq, FILE *output_file)
 }
 #endif
 
-static const char *get_insn_group_color(uint8_t opcode)
-{
-    const char *color_load      = "\033[1;34m";
-    const char *color_store     = "\033[1;36m";
-    const char *color_arith    = "\033[1;32m";
-    const char *color_branch   = "\033[1;33m";
-    const char *color_mul_div  = "\033[1;31m";
-    const char *color_reset    = "\033[0m";
+// static const char *get_insn_group_color(uint8_t opcode)
+// {
+//     const char *color_load      = "\033[1;34m";
+//     const char *color_store     = "\033[1;36m";
+//     const char *color_arith    = "\033[1;32m";
+//     const char *color_branch   = "\033[1;33m";
+//     const char *color_mul_div  = "\033[1;31m";
+//     const char *color_reset    = "\033[0m";
 
-    if (opcode >= rv_insn_lb && opcode <= rv_insn_lhu) return color_load;
-    if (opcode >= rv_insn_sb && opcode <= rv_insn_sw) return color_store;
-    if (opcode >= rv_insn_mul && opcode <= rv_insn_remu) return color_mul_div;
-    if ((opcode >= rv_insn_beq && opcode <= rv_insn_bgeu) || 
-         opcode == rv_insn_jal || opcode == rv_insn_jalr) {
-        return color_branch;
-    }
-    if (opcode == rv_insn_add || opcode == rv_insn_addi || 
-        opcode == rv_insn_sub || opcode == rv_insn_lui || 
-        opcode == rv_insn_auipc) {
-        return color_arith;
-    }
-    return color_reset;
-}
+//     if (opcode >= rv_insn_lb && opcode <= rv_insn_lhu) return color_load;
+//     if (opcode >= rv_insn_sb && opcode <= rv_insn_sw) return color_store;
+//     if (opcode >= rv_insn_mul && opcode <= rv_insn_remu) return color_mul_div;
+//     if ((opcode >= rv_insn_beq && opcode <= rv_insn_bgeu) || 
+//          opcode == rv_insn_jal || opcode == rv_insn_jalr) {
+//         return color_branch;
+//     }
+//     if (opcode == rv_insn_add || opcode == rv_insn_addi || 
+//         opcode == rv_insn_sub || opcode == rv_insn_lui || 
+//         opcode == rv_insn_auipc) {
+//         return color_arith;
+//     }
+//     return color_reset;
+// }
 
 void rv_profile(riscv_t *rv, char *out_file_path) ///
 {
@@ -1260,10 +1260,10 @@ void rv_profile(riscv_t *rv, char *out_file_path) ///
 
     for (int i = 0 ; i < N_RV_INSNS ; i++){
         if (rv->insn_counter[i] > 0){
-            const char *color = get_insn_group_color(i);
-            const char *reset = "\033[0m";
+            // const char *color = get_insn_group_color(i);
+            // const char *reset = "\033[0m";
 
-            fprintf(f, "%s%-20s%s | %-15lu\n", color, insn_name_table[i], reset, rv->insn_counter[i]);
+            fprintf(f, "%-20s | %-15lu\n", insn_name_table[i], rv->insn_counter[i]);
         }
     }
 
