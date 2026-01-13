@@ -560,6 +560,22 @@ riscv_t *rv_create(riscv_user_t rv_attr)
     riscv_t *rv = calloc(1, sizeof(riscv_t));
     if (!rv)
         return NULL;
+
+    const vm_attr_t *user_attr = (const vm_attr_t *) rv_attr;
+
+    if (user_attr->history_csv_path) {
+        rv->history_csv_path = strdup(user_attr->history_csv_path);
+    }
+
+    if (rv->history_csv_path) {
+        rv->history_log = fopen(rv->history_csv_path, "w");
+        if (rv->history_log) {
+            fprintf(rv->history_log, "cycle,pc,type,addr\n");
+        } else {
+            rv_log_error("Failed to open history log file: %s", rv->history_csv_path);
+        }
+    }
+    
     assert(rv);
 
     
@@ -1013,6 +1029,12 @@ void rv_delete(riscv_t *rv)
     /* sync device, cleanup inside the callee */
     rv_fsync_device();
 #endif
+
+    if (rv->history_log) {
+        fclose(rv->history_log);
+        rv->history_log = NULL;
+    }
+
     free(rv);
 }
 
@@ -1283,6 +1305,18 @@ void rv_profile(riscv_t *rv, char *out_file_path) ///
     fprintf(f, "%-30s | %-15lu\n", "Untaken Forward", rv->branch_untaken_forward);
     fprintf(f, "%-30s | %-15lu\n", "Untaken Backward", rv->branch_untaken_backward);
     fprintf(f, "===========================================================\n\n");
+
+    // Cycles and CPI reporting
+    uint64_t total_insn = 0;
+    for (int i = 0; i < N_RV_INSNS; i++)
+        total_insn += rv->insn_counter[i];
+
+    if (total_insn > 0) {
+        double cpi = (double) rv->csr_cycle / total_insn;
+        fprintf(f, "Total Cycles: %lu\n", rv->csr_cycle);
+        fprintf(f, "Total Instructions: %lu\n", total_insn);
+        fprintf(f, "Average CPI: %.3f\n", cpi);
+    }
 
 #if RV32_HAS(JIT)
     fprintf(f,

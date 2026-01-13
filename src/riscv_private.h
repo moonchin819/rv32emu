@@ -194,6 +194,9 @@ struct riscv_internal {
     uint64_t branch_untaken_forward;
     uint64_t branch_untaken_backward;
 
+    FILE *history_log;
+    char *history_csv_path;
+
 #if RV32_HAS(JIT) && RV32_HAS(SYSTEM)
     /*
      * Aarch64 encoder only accepts 9 bits signed offset. Do not put this
@@ -211,7 +214,7 @@ struct riscv_internal {
 
     /* I/O interface */
     riscv_io_t io;
-
+    
 #if RV32_HAS(EXT_F)
     /* float registers */
     riscv_float_t F[32];

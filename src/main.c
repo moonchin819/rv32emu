@@ -56,6 +56,7 @@ static bool opt_misaligned = false;
 /* dump profiling data */
 static bool opt_prof_data = false;
 static char *prof_out_file;
+static char history_out_file[PATH_MAX];
 
 #if RV32_HAS(SYSTEM_MMIO)
 /* Linux kernel data */
@@ -195,6 +196,19 @@ static bool parse_args(int argc, char **args)
         }
 
         char *prog_basename = basename(opt_prog_name);
+
+        // Process the file name : from '[file_name.elf].prof' to '[file_name].prof'
+        char clean_name[PATH_MAX];
+        strncpy(clean_name, prog_basename, PATH_MAX - 1);
+        clean_name[PATH_MAX - 1] = '\0';
+
+        char *dot = strrchr(clean_name, '.');
+        if (dot && !strcmp(dot, ".elf")){
+            *dot = '\0';
+        }
+
+        snprintf(history_out_file, sizeof(history_out_file), "visualization/%s_history.csv", clean_name);
+
         size_t total_len = strlen(cwd_path) + 1 + strlen(rel_path) +
                            strlen(prog_basename) + 5 + 1;
         prof_out_file = malloc(total_len);
@@ -205,7 +219,7 @@ static bool parse_args(int argc, char **args)
         assert(prof_out_file);
 
         snprintf(prof_out_file, total_len, "%s/%s%s.prof", cwd_path, rel_path,
-                 prog_basename);
+                 clean_name);
     }
     return true;
 }
@@ -297,6 +311,7 @@ int main(int argc, char **args)
         .profile_output_file = prof_out_file,
         .cycle_per_step = CYCLE_PER_STEP,
         .allow_misalign = opt_misaligned,
+        .history_csv_path = history_out_file,
     };
 #if RV32_HAS(SYSTEM_MMIO)
     attr.data.system.kernel = opt_kernel_img;

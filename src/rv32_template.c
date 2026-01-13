@@ -659,6 +659,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         uint32_t addr = rv->X[ir->rs1] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         rv->X[ir->rd] = sign_extend_b(MEM_READ_B(rv, addr));
     },
     GEN({
@@ -676,6 +679,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(1, LOAD, false, 1);
         rv->X[ir->rd] = sign_extend_h(MEM_READ_S(rv, addr));
     },
@@ -694,6 +700,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         rv->X[ir->rd] = MEM_READ_W(rv, addr);
     },
@@ -712,6 +721,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         uint32_t addr = rv->X[ir->rs1] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         rv->X[ir->rd] = MEM_READ_B(rv, addr);
     },
     GEN({
@@ -729,6 +741,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(1, LOAD, false, 1);
         rv->X[ir->rd] = MEM_READ_S(rv, addr);
     },
@@ -753,6 +768,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         const uint32_t value = rv->X[ir->rs2];
         MEM_WRITE_B(rv, addr, value);
 #if RV32_HAS(ARCH_TEST)
@@ -774,6 +792,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(1, STORE, false, 1);
         const uint32_t value = rv->X[ir->rs2];
         MEM_WRITE_S(rv, addr, value);
@@ -796,6 +817,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, STORE, false, 1);
         const uint32_t value = rv->X[ir->rs2];
         MEM_WRITE_W(rv, addr, value);
@@ -1628,6 +1652,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         if (ir->rd)
             rv->X[ir->rd] = MEM_READ_W(rv, addr);
@@ -1648,6 +1675,9 @@ RVOP(
          * FIXME: unimplemented
          */
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, STORE, false, 1);
         const uint32_t value = rv->X[ir->rs2];
         MEM_WRITE_W(rv, addr, value);
@@ -1666,6 +1696,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         const uint32_t value1 = MEM_READ_W(rv, addr);
         const uint32_t value2 = rv->X[ir->rs2];
@@ -1686,6 +1719,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         const uint32_t value1 = MEM_READ_W(rv, addr);
         const uint32_t value2 = rv->X[ir->rs2];
@@ -1707,6 +1743,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         const uint32_t value1 = MEM_READ_W(rv, addr);
         const uint32_t value2 = rv->X[ir->rs2];
@@ -1728,6 +1767,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         const uint32_t value1 = MEM_READ_W(rv, addr);
         const uint32_t value2 = rv->X[ir->rs2];
@@ -1749,6 +1791,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         const uint32_t value1 = MEM_READ_W(rv, addr);
         const uint32_t value2 = rv->X[ir->rs2];
@@ -1770,6 +1815,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         const uint32_t value1 = MEM_READ_W(rv, addr);
         const uint32_t value2 = rv->X[ir->rs2];
@@ -1793,6 +1841,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         const uint32_t value1 = MEM_READ_W(rv, addr);
         const uint32_t value2 = rv->X[ir->rs2];
@@ -1816,6 +1867,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         const uint32_t value1 = MEM_READ_W(rv, addr);
         const uint32_t value2 = rv->X[ir->rs2];
@@ -1837,6 +1891,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1];
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         const uint32_t value1 = MEM_READ_W(rv, addr);
         const uint32_t value2 = rv->X[ir->rs2];
@@ -1863,6 +1920,9 @@ RVOP(
         // rv->insn_counter[ir->opcode]++;
         /* copy into the float register */
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         rv->F[ir->rd].v = MEM_READ_W(rv, addr);
     },
@@ -1877,6 +1937,9 @@ RVOP(
         // rv->insn_counter[ir->opcode]++;
         /* copy from float registers */
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, STORE, false, 1);
         const uint32_t value = rv->F[ir->rs2].v;
         MEM_WRITE_W(rv, addr, value);
@@ -2271,6 +2334,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1] + (uint32_t) ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, true, 1);
         rv->X[ir->rd] = MEM_READ_W(rv, addr);
     },
@@ -2293,6 +2359,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1] + (uint32_t) ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, STORE, true, 1);
         const uint32_t value = rv->X[ir->rs2];
         MEM_WRITE_W(rv, addr, value);
@@ -2745,6 +2814,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[rv_reg_sp] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, true, 1);
         rv->X[ir->rd] = MEM_READ_W(rv, addr);
     },
@@ -2862,6 +2934,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[rv_reg_sp] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, STORE, true, 1);
         const uint32_t value = rv->X[ir->rs2];
         MEM_WRITE_W(rv, addr, value);
@@ -2886,6 +2961,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[rv_reg_sp] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         rv->F[ir->rd].v = MEM_READ_W(rv, addr);
     },
@@ -2899,6 +2977,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[rv_reg_sp] + ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, STORE, false, 1);
         const uint32_t value = rv->F[ir->rs2].v;
         MEM_WRITE_W(rv, addr, value);
@@ -2916,6 +2997,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1] + (uint32_t) ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
         rv->F[ir->rd].v = MEM_READ_W(rv, addr);
     },
@@ -2929,6 +3013,9 @@ RVOP(
     {
         // rv->insn_counter[ir->opcode]++;
         const uint32_t addr = rv->X[ir->rs1] + (uint32_t) ir->imm;
+        if (rv->history_log && (cycle % 1000 == 0)) {
+            fprintf(rv->history_log, "%lu,%08X,M,%08X\n", cycle, PC, addr);
+        }
         RV_EXC_MISALIGN_HANDLER(3, STORE, false, 1);
         const uint32_t value = rv->F[ir->rs2].v;
         MEM_WRITE_W(rv, addr, value);

@@ -622,6 +622,8 @@ static uint32_t peripheral_update_ctr = 64;
     static PRESERVE_NONE bool do_##inst(riscv_t *rv, const rv_insn_t *ir, \
                                         uint64_t cycle, uint32_t PC)      \
     {                                                                     \
+        if (rv->history_log && (cycle % 1000 == 0))                        \
+            fprintf(rv->history_log, "%lu,%08X,I,0\n", cycle, PC);          \
         RVOP_SYNC_PC(rv, PC);                                             \
         IIF(RV32_HAS(SYSTEM))(rv->timer++;, ) cycle++;                    \
         rv->insn_counter[ir->opcode]++;                                   \

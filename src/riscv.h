@@ -565,6 +565,7 @@ typedef struct {
     /* profiling output file if RV_RUN_PROFILE is set in run_flag */
     char *profile_output_file;
 
+    const char *history_csv_path;
     /* set by rv_create during initialization.
      * use rv_remap_stdstream to overwrite them
      */
