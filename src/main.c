@@ -2,7 +2,8 @@
  * rv32emu is freely redistributable under the MIT License. See the file
  * "LICENSE" for information on usage and redistribution of this file.
  */
-
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <assert.h>
 #include <inttypes.h>
 #include <libgen.h>
@@ -18,6 +19,7 @@
 
 #include "elf.h"
 #include "io.h"
+#include "prof_callstack.h"
 #include "riscv.h"
 #include "utils.h"
 
@@ -206,7 +208,8 @@ static bool parse_args(int argc, char **args)
         if (dot && !strcmp(dot, ".elf")){
             *dot = '\0';
         }
-
+        
+        mkdir("visualization", 0755);
         snprintf(history_out_file, sizeof(history_out_file), "visualization/%s_history.csv", clean_name);
 
         size_t total_len = strlen(cwd_path) + 1 + strlen(rel_path) +
@@ -363,6 +366,9 @@ int main(int argc, char **args)
 #endif
 
     rv_run(rv);
+
+    /* callstack profiling: output results */
+    prof_finish("callstack_folded_inst.txt");
 
     /* dump registers as JSON */
     if (opt_dump_regs)
