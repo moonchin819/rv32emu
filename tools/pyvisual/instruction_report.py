@@ -1,5 +1,5 @@
-import sys
 import os
+import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -39,7 +39,7 @@ def get_group_info(insn_name):
             return group, info['color']
     return 'Other', '#bdc3c7'
 
-def generate_png(prof_path):
+def generate_png(prof_path, top_n):
     output_dir = "visualization"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -79,10 +79,10 @@ def generate_png(prof_path):
     ax1.pie(group_sums, labels=group_sums.index, autopct=pct_format, startangle=140, colors=group_colors, explode=[0.05]*len(group_sums))
     ax1.set_title("Instruction Group Percentage", fontsize=16, fontweight='bold')
 
-    # Use bar chart to show top 15 executed instruction
-    top15 = df.sort_values(by='Count', ascending=False).head(15)
-    bars = ax2.bar(top15['Instruction'], top15['Count'], color=top15['Color'])
-    ax2.set_title("Top 15 Executed Instructions", fontsize=16, fontweight='bold')
+    # Use bar chart to show top N executed instruction
+    topn = df.sort_values(by='Count', ascending=False).head(top_n)
+    bars = ax2.bar(topn['Instruction'], topn['Count'], color=topn['Color'])
+    ax2.set_title(f"Top {top_n} Executed Instructions", fontsize=16, fontweight='bold')
     ax2.set_ylabel("Execution Count")
 
     ax2.yaxis.set_major_formatter(ticker.ScalarFormatter())
@@ -103,7 +103,9 @@ def generate_png(prof_path):
     print(f"\nAnalysis PNG generated: {output_png}")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 generate_png_report.py <input.prof>")
-    else:
-        generate_png(sys.argv[1])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", help="Input .prof file path.")
+    parser.add_argument("--top", type=int, default=15,
+                        help="Number of top instructions to show (default: 15).")
+    args = parser.parse_args()
+    generate_png(args.input, args.top)
