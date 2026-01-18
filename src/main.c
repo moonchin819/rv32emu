@@ -207,7 +207,7 @@ static bool parse_args(int argc, char **args)
             *dot = '\0';
         }
 
-        snprintf(history_out_file, sizeof(history_out_file), "visualization/%s_history.csv", clean_name);
+        snprintf(history_out_file, sizeof(history_out_file), "visualization/%s_history.bin", clean_name);
 
         size_t total_len = strlen(cwd_path) + 1 + strlen(rel_path) +
                            strlen(prog_basename) + 5 + 1;
@@ -311,7 +311,7 @@ int main(int argc, char **args)
         .profile_output_file = prof_out_file,
         .cycle_per_step = CYCLE_PER_STEP,
         .allow_misalign = opt_misaligned,
-        .history_csv_path = history_out_file,
+        .history_bin_path = history_out_file,
     };
 #if RV32_HAS(SYSTEM_MMIO)
     attr.data.system.kernel = opt_kernel_img;

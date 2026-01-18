@@ -563,16 +563,43 @@ riscv_t *rv_create(riscv_user_t rv_attr)
 
     const vm_attr_t *user_attr = (const vm_attr_t *) rv_attr;
 
-    if (user_attr->history_csv_path) {
-        rv->history_csv_path = strdup(user_attr->history_csv_path);
+    if (user_attr->history_bin_path) {
+        rv->history_bin_path = strdup(user_attr->history_bin_path);
     }
 
-    if (rv->history_csv_path) {
-        rv->history_log = fopen(rv->history_csv_path, "w");
+    rv->trace_sample_every = 1000;
+    const char *sample_env = getenv("RV_TRACE_SAMPLE_EVERY");
+    if (!sample_env || sample_env[0] == '\0')
+        sample_env = getenv("RV_TRACE_SAMPLE");
+    if (sample_env && sample_env[0] != '\0') {
+        char *endptr = NULL;
+        unsigned long val = strtoul(sample_env, &endptr, 10);
+        if (endptr != sample_env && val > 0 && val <= UINT32_MAX) {
+            rv->trace_sample_every = (uint32_t) val;
+        }
+    }
+
+    bool trace_enabled = false;
+    const char *trace_env = getenv("RV_TRACE_ENABLE");
+    if (!trace_env || trace_env[0] == '\0')
+        trace_env = getenv("RV_TRACE");
+    if (trace_env && trace_env[0] != '\0') {
+        trace_enabled = (strcmp(trace_env, "1") == 0) ||
+                        (strcasecmp(trace_env, "yes") == 0) ||
+                        (strcasecmp(trace_env, "true") == 0);
+    }
+
+    if (trace_enabled && rv->history_bin_path) {
+        rv->history_log = fopen(rv->history_bin_path, "wb");
         if (rv->history_log) {
-            fprintf(rv->history_log, "cycle,pc,type,addr\n");
+            rv_trace_header_t header = {
+                .magic = {'R', 'V', 'T', 'R'},
+                .version = 1,
+                .record_size = sizeof(rv_trace_record_t),
+            };
+            fwrite(&header, sizeof(header), 1, rv->history_log);
         } else {
-            rv_log_error("Failed to open history log file: %s", rv->history_csv_path);
+            rv_log_error("Failed to open history log file: %s", rv->history_bin_path);
         }
     }
     

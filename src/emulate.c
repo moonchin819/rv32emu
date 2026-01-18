@@ -618,12 +618,33 @@ static uint32_t peripheral_update_ctr = 64;
     } while (0)
 #endif
 
+static inline void rv_trace_record(riscv_t *rv,
+                                   uint64_t cycle,
+                                   uint32_t pc,
+                                   uint32_t type,
+                                   uint32_t addr)
+{
+    if (!rv->history_log)
+        return;
+    if (rv->trace_sample_every > 1) {
+        if ((rv->trace_record_count++ % rv->trace_sample_every) != 0)
+            return;
+    }
+    rv_trace_record_t record = {
+        .cycle = cycle,
+        .pc = pc,
+        .type = type,
+        .addr = addr,
+        .reserved = 0,
+    };
+    fwrite(&record, sizeof(record), 1, rv->history_log);
+}
+
 #define RVOP(inst, code, asm)                                             \
     static PRESERVE_NONE bool do_##inst(riscv_t *rv, const rv_insn_t *ir, \
                                         uint64_t cycle, uint32_t PC)      \
     {                                                                     \
-        if (rv->history_log && (cycle % 1000 == 0))                        \
-            fprintf(rv->history_log, "%lu,%08X,I,0\n", cycle, PC);          \
+        rv_trace_record(rv, cycle, PC, RV_TRACE_INSN, 0);                  \
         RVOP_SYNC_PC(rv, PC);                                             \
         IIF(RV32_HAS(SYSTEM))(rv->timer++;, ) cycle++;                    \
         rv->insn_counter[ir->opcode]++;                                   \

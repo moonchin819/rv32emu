@@ -175,6 +175,25 @@ typedef struct {
 /* clear all block in the block map */
 void block_map_clear(riscv_t *rv);
 
+enum {
+    RV_TRACE_INSN = 1,
+    RV_TRACE_MEM = 2,
+};
+
+typedef struct {
+    uint8_t magic[4];
+    uint32_t version;
+    uint32_t record_size;
+} rv_trace_header_t;
+
+typedef struct {
+    uint64_t cycle;
+    uint32_t pc;
+    uint32_t type;
+    uint32_t addr;
+    uint32_t reserved;
+} rv_trace_record_t;
+
 struct riscv_internal {
     bool halt; /* indicate whether the core is halted */
 
@@ -194,8 +213,11 @@ struct riscv_internal {
     uint64_t branch_untaken_forward;
     uint64_t branch_untaken_backward;
 
+    uint64_t trace_record_count;
+    uint32_t trace_sample_every;
+
     FILE *history_log;
-    char *history_csv_path;
+    char *history_bin_path;
 
 #if RV32_HAS(JIT) && RV32_HAS(SYSTEM)
     /*
