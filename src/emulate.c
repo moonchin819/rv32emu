@@ -26,6 +26,7 @@ extern struct target_ops gdbstub_ops;
 #include "decode.h"
 #include "io.h"
 #include "mpool.h"
+#include "prof_callstack.h"
 #include "riscv.h"
 #include "riscv_private.h"
 #include "utils.h"
@@ -2157,6 +2158,8 @@ void rv_step(void *arg)
             prev = NULL;
             break;
         }
+        /* callstack profiling: count instruction */
+        prof_on_inst();
 #if RV32_HAS(JIT)
         if (has_loops && !block->has_loops)
             block->has_loops = true;

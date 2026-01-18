@@ -31,6 +31,7 @@
 #include "em_runtime.h"
 #endif
 
+#include "prof_callstack.h"
 #include "elf.h"
 #include "mpool.h"
 #include "riscv.h"
@@ -683,6 +684,10 @@ riscv_t *rv_create(riscv_user_t rv_attr)
 
     /* set the entry pc */
     const struct Elf32_Ehdr UNUSED *hdr = get_elf_header(elf);
+
+    /* initialize callstack profiler */
+    prof_init("build/symbols.txt", hdr->e_entry);
+    
     assert(rv_set_pc(rv, hdr->e_entry));
 
     elf_delete(elf);

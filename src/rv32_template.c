@@ -165,6 +165,10 @@ RVOP(
         // rv->insn_counter[ir->opcode]++;
         /* Jump */
         PC += ir->imm;
+
+        /* callstack profiling */
+        prof_on_jal(PC, (ir->rd == 0));
+
         /* link with return address */
         if (ir->rd)
             rv->X[ir->rd] = pc + 4;
@@ -317,6 +321,11 @@ RVOP(
         const uint32_t pc = PC;
         /* jump */
         PC = (rv->X[ir->rs1] + ir->imm) & ~1U;
+
+        /* callstack profiling */
+        bool is_ret = (ir->rd == 0) && (ir->rs1 == 1);
+        prof_on_jalr(PC, is_ret, (ir->rd == 0));
+        
         /* link */
         if (ir->rd)
             rv->X[ir->rd] = pc + 4;

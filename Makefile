@@ -201,7 +201,7 @@ OBJS := map.o utils.o decode.o io.o syscall.o
 ifeq ($(CC_IS_EMCC), 1)
 OBJS += em_runtime.o
 endif
-OBJS += emulate.o riscv.o log.o elf.o cache.o mpool.o $(OBJS_EXT) main.o
+OBJS += emulate.o riscv.o log.o elf.o cache.o mpool.o prof_callstack.o $(OBJS_EXT) main.o
 OBJS := $(addprefix $(OUT)/, $(OBJS))
 deps += $(OBJS:%.o=%.o.d)
 
