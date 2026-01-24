@@ -192,7 +192,7 @@ typedef struct {
     uint32_t type;
     uint32_t addr;
     uint32_t reserved;
-} rv_trace_record_t;
+} __attribute__((packed)) rv_trace_record_t;
 
 struct riscv_internal {
     bool halt; /* indicate whether the core is halted */
