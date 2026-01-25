@@ -6,13 +6,14 @@ import matplotlib.ticker as ticker
 
 # Define categories and their color
 INSN_GROUPS = {
-    'Load': {'color': '#ff0088', 'insns': ['lb', 'lh', 'lw', 'lbu', 'lhu', 'flw', 'clw', 'clwsp']},
-    'Store': {'color': '#5555ff', 'insns': ['sb', 'sh', 'sw', 'fsw', 'csw', 'cswsp']},
+    'Load': {'color': '#ff0088', 'insns': ['lb', 'lh', 'lw', 'lbu', 'lhu', 'clw', 'clwsp']},
+    'Store': {'color': '#5555ff', 'insns': ['sb', 'sh', 'sw', 'csw', 'cswsp']},
     'Arithmetic': {'color': '#2ecc71', 'insns': ['and', 'or', 'andi', 'xori', 'srai', 'xor', 'add', 'addi', 'sub', 'sll', 'slli', 'lui', 'auipc', 'srli', 'sltu']},
     'Branch': {'color': '#f1c40f', 'insns': ['beq', 'bne', 'blt', 'bge', 'bltu', 'bgeu', 'cbeqz', 'cbnez']},
     'Jump': {'color': '#e67e22', 'insns': ['jal', 'jalr', 'cj', 'cjal', 'cjr', 'cjalr']},
     'Multiply': {'color': '#e74c3c', 'insns': ['mul', 'mulh', 'div', 'rem']},
-    'System': {'color': '#95a5a6', 'insns': ['ecall', 'ebreak', 'csrrw', 'csrrs']}
+    'System': {'color': '#95a5a6', 'insns': ['ecall', 'ebreak', 'csrrw', 'csrrs']},
+    'FP-Mem': {'color': '#a29bfe', 'insns': ['flw', 'fsw', 'fld', 'fsd']},
 }
 
 """ Since the number is too large and the number on the bar chart with same height will overlap each other, 
