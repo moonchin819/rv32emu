@@ -113,6 +113,7 @@ def plot_behavior(input_path):
     ax1.set_title("PC-over-time Visualization")
     ax1.yaxis.set_major_formatter(hex_formatter)
     ax1.grid(True, linestyle=':', alpha=0.5)
+    ax1.set_xlabel("Execution Time (Cycles)")
 
     # Plotting Memory Access
     if not mem_all.empty:
@@ -127,8 +128,7 @@ def plot_behavior(input_path):
             ax.yaxis.set_major_formatter(hex_formatter)
             ax.set_ylim(lo, hi)
             ax.grid(True, linestyle=':', alpha=0.5)
-        if len(mem_axes) > 0:
-            mem_axes[-1].set_xlabel("Execution Time (Cycles)")
+            ax.set_xlabel("Execution Time (Cycles)")
 
     # Manage the layout and save it as png.
     plt.tight_layout()
