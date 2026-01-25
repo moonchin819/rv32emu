@@ -121,7 +121,6 @@
 
 /* Internal */
 RVOP(nop, { 
-    // rv->insn_counter[ir->opcode]++;
     rv->X[rv_reg_zero] = 0; }, GEN({/* no operation */}))
 
 /* LUI is used to build 32-bit constants and uses the U-type format. LUI
@@ -132,7 +131,7 @@ RVOP(nop, {
 RVOP(
     lui,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = ir->imm; },
     GEN({
         map, VR0, rd;
@@ -147,7 +146,7 @@ RVOP(
 RVOP(
     auipc,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = ir->imm + PC; },
     GEN({
         map, VR0, rd;
@@ -162,7 +161,7 @@ RVOP(
     jal,
     {
         const uint32_t pc = PC;
-        // rv->insn_counter[ir->opcode]++;
+
         /* Jump */
         PC += ir->imm;
 
@@ -317,7 +316,7 @@ RVOP(
 RVOP(
     jalr,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t pc = PC;
         /* jump */
         PC = (rv->X[ir->rs1] + ir->imm) & ~1U;
@@ -475,7 +474,7 @@ RVOP(
 RVOP(
     beq,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         BRANCH_FUNC(uint32_t, !=); },
     GEN({
         rald2, rs1, rs2;
@@ -502,7 +501,7 @@ RVOP(
 RVOP(
     bne,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         BRANCH_FUNC(uint32_t, ==); },
     GEN({
         rald2, rs1, rs2;
@@ -529,7 +528,7 @@ RVOP(
 RVOP(
     blt,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         BRANCH_FUNC(int32_t, >=); },
     GEN({
         rald2, rs1, rs2;
@@ -556,7 +555,7 @@ RVOP(
 RVOP(
     bge,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         BRANCH_FUNC(int32_t, <); },
     GEN({
         rald2, rs1, rs2;
@@ -583,7 +582,7 @@ RVOP(
 RVOP(
     bltu,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         BRANCH_FUNC(uint32_t, >=); },
     GEN({
         rald2, rs1, rs2;
@@ -610,7 +609,7 @@ RVOP(
 RVOP(
     bgeu,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         BRANCH_FUNC(uint32_t, <); },
     GEN({
         rald2, rs1, rs2;
@@ -666,7 +665,7 @@ RVOP(
 RVOP(
     lb,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t addr = rv->X[ir->rs1] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         rv->X[ir->rd] = sign_extend_b(MEM_READ_B(rv, addr));
@@ -684,7 +683,7 @@ RVOP(
 RVOP(
     lh,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(1, LOAD, false, 1);
@@ -703,7 +702,7 @@ RVOP(
 RVOP(
     lw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -722,7 +721,7 @@ RVOP(
 RVOP(
     lbu,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t addr = rv->X[ir->rs1] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         rv->X[ir->rd] = MEM_READ_B(rv, addr);
@@ -740,7 +739,7 @@ RVOP(
 RVOP(
     lhu,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(1, LOAD, false, 1);
@@ -765,7 +764,7 @@ RVOP(
 RVOP(
     sb,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         const uint32_t value = rv->X[ir->rs2];
@@ -787,7 +786,7 @@ RVOP(
 RVOP(
     sh,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(1, STORE, false, 1);
@@ -810,7 +809,7 @@ RVOP(
 RVOP(
     sw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, STORE, false, 1);
@@ -837,7 +836,7 @@ RVOP(
 RVOP(
     addi,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] + ir->imm; },
     GEN({
         rald, VR0, rs1;
@@ -855,7 +854,7 @@ RVOP(
 RVOP(
     slti,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = ((int32_t) (rv->X[ir->rs1]) < ir->imm) ? 1 : 0; },
     GEN({
         rald, VR0, rs1;
@@ -874,7 +873,7 @@ RVOP(
 RVOP(
     sltiu,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = (rv->X[ir->rs1] < (uint32_t) ir->imm) ? 1 : 0; },
     GEN({
         rald, VR0, rs1;
@@ -891,7 +890,7 @@ RVOP(
 RVOP(
     xori,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] ^ ir->imm; },
     GEN({
         rald, VR0, rs1;
@@ -906,7 +905,7 @@ RVOP(
 RVOP(
     ori,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] | ir->imm; },
     GEN({
         rald, VR0, rs1;
@@ -923,7 +922,7 @@ RVOP(
 RVOP(
     andi,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] & ir->imm; },
     GEN({
         rald, VR0, rs1;
@@ -958,7 +957,7 @@ FORCE_INLINE void shift_func(riscv_t *rv, const rv_insn_t *ir)
 RVOP(
     slli,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         shift_func(rv, ir); },
     GEN({
         rald, VR0, rs1;
@@ -975,7 +974,7 @@ RVOP(
 RVOP(
     srli,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         shift_func(rv, ir); },
     GEN({
         rald, VR0, rs1;
@@ -992,7 +991,7 @@ RVOP(
 RVOP(
     srai,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         shift_func(rv, ir); },
     GEN({
         rald, VR0, rs1;
@@ -1007,7 +1006,7 @@ RVOP(
 RVOP(
     add,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] + rv->X[ir->rs2]; },
     GEN({
         rald2, rs1, rs2;
@@ -1021,7 +1020,7 @@ RVOP(
 RVOP(
     sub,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] - rv->X[ir->rs2]; },
     GEN({
         rald2, rs1, rs2;
@@ -1035,7 +1034,7 @@ RVOP(
 RVOP(
     sll,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] << (rv->X[ir->rs2] & 0x1f); },
     GEN({
         rald2, rs1, rs2;
@@ -1050,7 +1049,7 @@ RVOP(
 RVOP(
     slt,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] =
             ((int32_t) (rv->X[ir->rs1]) < (int32_t) (rv->X[ir->rs2])) ? 1 : 0;
     },
@@ -1069,7 +1068,7 @@ RVOP(
 RVOP(
     sltu,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = (rv->X[ir->rs1] < rv->X[ir->rs2]) ? 1 : 0; },
     GEN({
         rald2, rs1, rs2;
@@ -1086,7 +1085,7 @@ RVOP(
 RVOP(
     xor,
     {
-        // rv->insn_counter[ir->opcode]++;
+
       rv->X[ir->rd] = rv->X[ir->rs1] ^ rv->X[ir->rs2];
     },
     GEN({
@@ -1101,7 +1100,7 @@ RVOP(
 RVOP(
     srl,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] >> (rv->X[ir->rs2] & 0x1f); },
     GEN({
         rald2, rs1, rs2;
@@ -1116,7 +1115,7 @@ RVOP(
 RVOP(
     sra,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = ((int32_t) rv->X[ir->rs1]) >> (rv->X[ir->rs2] & 0x1f); },
     GEN({
         rald2, rs1, rs2;
@@ -1131,7 +1130,7 @@ RVOP(
 RVOP(
     or,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] | rv->X[ir->rs2]; },
     GEN({
         rald2, rs1, rs2;
@@ -1146,7 +1145,7 @@ RVOP(
 RVOP(
      and,
      { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] & rv->X[ir->rs2]; },
      GEN({
         rald2, rs1, rs2;
@@ -1164,7 +1163,7 @@ RVOP(
 RVOP(
     fence,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         PC += 4;
         /* FIXME: fill real implementations */
         goto end_op;
@@ -1177,7 +1176,7 @@ RVOP(
 RVOP(
     ecall,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->compressed = false;
         rv->csr_cycle = cycle;
         rv->PC = PC;
@@ -1196,7 +1195,7 @@ RVOP(
 RVOP(
     ebreak,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->compressed = false;
         rv->csr_cycle = cycle;
         rv->PC = PC;
@@ -1215,7 +1214,7 @@ RVOP(
 RVOP(
     wfi,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         PC += 4;
         /* FIXME: Implement */
         goto end_op;
@@ -1228,7 +1227,7 @@ RVOP(
 RVOP(
     uret,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         /* FIXME: Implement */
         return false;
     },
@@ -1241,7 +1240,7 @@ RVOP(
 RVOP(
     sret,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->is_trapped = false;
         rv->priv_mode = (rv->csr_sstatus & SSTATUS_SPP) >> SSTATUS_SPP_SHIFT;
         rv->csr_sstatus &= ~(SSTATUS_SPP);
@@ -1264,7 +1263,7 @@ RVOP(
 RVOP(
     hret,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         /* FIXME: Implement */
         return false;
     },
@@ -1276,7 +1275,7 @@ RVOP(
 RVOP(
     mret,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->priv_mode = (rv->csr_mstatus & MSTATUS_MPP) >> MSTATUS_MPP_SHIFT;
         rv->csr_mstatus &= ~(MSTATUS_MPP);
 
@@ -1306,7 +1305,7 @@ RVOP(
 RVOP(
     sfencevma,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         PC += 4;
 #if RV32_HAS(SYSTEM)
         if (ir->rs1 == 0) {
@@ -1336,7 +1335,7 @@ RVOP(
 RVOP(
     fencei,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         PC += 4;
         /* FIXME: fill real implementations */
         rv->csr_cycle = cycle;
@@ -1353,7 +1352,7 @@ RVOP(
 RVOP(
     csrrw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t tmp = csr_csrrw(rv, ir->imm, rv->X[ir->rs1], cycle);
         rv->X[ir->rd] = ir->rd ? tmp : rv->X[ir->rd];
     },
@@ -1373,7 +1372,7 @@ RVOP(
 RVOP(
     csrrs,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t tmp = csr_csrrs(
             rv, ir->imm, (ir->rs1 == rv_reg_zero) ? 0U : rv->X[ir->rs1], cycle);
         rv->X[ir->rd] = ir->rd ? tmp : rv->X[ir->rd];
@@ -1386,7 +1385,7 @@ RVOP(
 RVOP(
     csrrc,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t tmp = csr_csrrc(
             rv, ir->imm, (ir->rs1 == rv_reg_zero) ? 0U : rv->X[ir->rs1], cycle);
         rv->X[ir->rd] = ir->rd ? tmp : rv->X[ir->rd];
@@ -1399,7 +1398,7 @@ RVOP(
 RVOP(
     csrrwi,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t tmp = csr_csrrw(rv, ir->imm, ir->rs1, cycle);
         rv->X[ir->rd] = ir->rd ? tmp : rv->X[ir->rd];
     },
@@ -1411,7 +1410,7 @@ RVOP(
 RVOP(
     csrrsi,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t tmp = csr_csrrs(rv, ir->imm, ir->rs1, cycle);
         rv->X[ir->rd] = ir->rd ? tmp : rv->X[ir->rd];
     },
@@ -1423,7 +1422,7 @@ RVOP(
 RVOP(
     csrrci,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t tmp = csr_csrrc(rv, ir->imm, ir->rs1, cycle);
         rv->X[ir->rd] = ir->rd ? tmp : rv->X[ir->rd];
     },
@@ -1439,7 +1438,7 @@ RVOP(
 RVOP(
     mul,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const int64_t multiplicand = (int32_t) rv->X[ir->rs1];
         const int64_t multiplier = (int32_t) rv->X[ir->rs2];
         rv->X[ir->rd] =
@@ -1460,7 +1459,7 @@ RVOP(
 RVOP(
     mulh,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const int64_t multiplicand = (int32_t) rv->X[ir->rs1];
         const int64_t multiplier = (int32_t) rv->X[ir->rs2];
         rv->X[ir->rd] = ((uint64_t) (multiplicand * multiplier)) >> 32;
@@ -1482,7 +1481,7 @@ RVOP(
 RVOP(
     mulhsu,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const int64_t multiplicand = (int32_t) rv->X[ir->rs1];
         const uint64_t umultiplier = rv->X[ir->rs2];
         rv->X[ir->rd] = ((uint64_t) (multiplicand * umultiplier)) >> 32;
@@ -1500,7 +1499,7 @@ RVOP(
 RVOP(
     mulhu,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] =
             ((uint64_t) rv->X[ir->rs1] * (uint64_t) rv->X[ir->rs2]) >> 32;
     },
@@ -1524,7 +1523,7 @@ RVOP(
 RVOP(
     div,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const int32_t dividend = (int32_t) rv->X[ir->rs1];
         const int32_t divisor = (int32_t) rv->X[ir->rs2];
         rv->X[ir->rd] = !divisor ? ~0U
@@ -1551,7 +1550,7 @@ RVOP(
 RVOP(
     divu,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t udividend = rv->X[ir->rs1];
         const uint32_t udivisor = rv->X[ir->rs2];
         rv->X[ir->rd] = !udivisor ? ~0U : udividend / udivisor;
@@ -1574,7 +1573,6 @@ RVOP(
  * +------------------------+-----------+----------+---------+
  */
 RVOP(rem, {
-    // rv->insn_counter[ir->opcode]++;
     const int32_t dividend = rv->X[ir->rs1];
     const int32_t divisor = rv->X[ir->rs2];
     rv->X[ir->rd] = !divisor ? dividend
@@ -1599,7 +1597,6 @@ GEN({
  * +------------------------+-----------+----------+----------+
  */
 RVOP(remu, {
-    // rv->insn_counter[ir->opcode]++;
     const uint32_t udividend = rv->X[ir->rs1];
     const uint32_t udivisor = rv->X[ir->rs2];
     rv->X[ir->rd] = !udivisor ? udividend : udividend
@@ -1643,7 +1640,7 @@ GEN({
 RVOP(
     lrw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1];
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -1661,7 +1658,7 @@ RVOP(
 RVOP(
     scw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         /* assume the 'reservation set' is valid
          * FIXME: unimplemented
          */
@@ -1683,7 +1680,7 @@ RVOP(
 RVOP(
     amoswapw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1];
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -1704,7 +1701,7 @@ RVOP(
 RVOP(
     amoaddw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1];
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -1726,7 +1723,7 @@ RVOP(
 RVOP(
     amoxorw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1];
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -1748,7 +1745,7 @@ RVOP(
 RVOP(
     amoandw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1];
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -1770,7 +1767,7 @@ RVOP(
 RVOP(
     amoorw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1];
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -1792,7 +1789,7 @@ RVOP(
 RVOP(
     amominw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1];
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -1816,7 +1813,7 @@ RVOP(
 RVOP(
     amomaxw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1];
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -1840,7 +1837,7 @@ RVOP(
 RVOP(
     amominuw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1];
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -1862,7 +1859,7 @@ RVOP(
 RVOP(
     amomaxuw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1];
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -1888,7 +1885,7 @@ RVOP(
 RVOP(
     flw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         /* copy into the float register */
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
@@ -1903,7 +1900,7 @@ RVOP(
 RVOP(
     fsw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         /* copy from float registers */
         const uint32_t addr = rv->X[ir->rs1] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
@@ -1922,7 +1919,7 @@ RVOP(
 RVOP(
     fmadds,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         rv->F[ir->rd] =
             f32_mulAdd(rv->F[ir->rs1], rv->F[ir->rs2], rv->F[ir->rs3]);
@@ -1936,7 +1933,7 @@ RVOP(
 RVOP(
     fmsubs,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         riscv_float_t tmp = rv->F[ir->rs3];
         tmp.v ^= FMASK_SIGN;
@@ -1951,7 +1948,7 @@ RVOP(
 RVOP(
     fnmsubs,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         riscv_float_t tmp = rv->F[ir->rs1];
         tmp.v ^= FMASK_SIGN;
@@ -1966,7 +1963,7 @@ RVOP(
 RVOP(
     fnmadds,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         riscv_float_t tmp1 = rv->F[ir->rs1];
         riscv_float_t tmp2 = rv->F[ir->rs3];
@@ -1983,7 +1980,7 @@ RVOP(
 RVOP(
     fadds,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         rv->F[ir->rd] = f32_add(rv->F[ir->rs1], rv->F[ir->rs2]);
         set_fflag(rv);
@@ -1996,7 +1993,7 @@ RVOP(
 RVOP(
     fsubs,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         rv->F[ir->rd] = f32_sub(rv->F[ir->rs1], rv->F[ir->rs2]);
         set_fflag(rv);
@@ -2009,7 +2006,7 @@ RVOP(
 RVOP(
     fmuls,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         rv->F[ir->rd] = f32_mul(rv->F[ir->rs1], rv->F[ir->rs2]);
         set_fflag(rv);
@@ -2022,7 +2019,7 @@ RVOP(
 RVOP(
     fdivs,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         rv->F[ir->rd] = f32_div(rv->F[ir->rs1], rv->F[ir->rs2]);
         set_fflag(rv);
@@ -2035,7 +2032,7 @@ RVOP(
 RVOP(
     fsqrts,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         rv->F[ir->rd] = f32_sqrt(rv->F[ir->rs1]);
         set_fflag(rv);
@@ -2048,7 +2045,7 @@ RVOP(
 RVOP(
     fsgnjs,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->F[ir->rd].v =
             (rv->F[ir->rs1].v & ~FMASK_SIGN) | (rv->F[ir->rs2].v & FMASK_SIGN);
     },
@@ -2060,7 +2057,7 @@ RVOP(
 RVOP(
     fsgnjns,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->F[ir->rd].v =
             (rv->F[ir->rs1].v & ~FMASK_SIGN) | (~rv->F[ir->rs2].v & FMASK_SIGN);
     },
@@ -2072,7 +2069,7 @@ RVOP(
 RVOP(
     fsgnjxs,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->F[ir->rd].v = rv->F[ir->rs1].v ^ (rv->F[ir->rs2].v & FMASK_SIGN); },
     GEN({
         assert; /* FIXME: Implement */
@@ -2088,7 +2085,7 @@ RVOP(
 RVOP(
     fmins,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         if (f32_isSignalingNaN(rv->F[ir->rs1]) ||
             f32_isSignalingNaN(rv->F[ir->rs2]))
             rv->csr_fcsr |= FFLAG_INVALID_OP;
@@ -2109,7 +2106,7 @@ RVOP(
 RVOP(
     fmaxs,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         if (f32_isSignalingNaN(rv->F[ir->rs1]) ||
             f32_isSignalingNaN(rv->F[ir->rs2]))
             rv->csr_fcsr |= FFLAG_INVALID_OP;
@@ -2135,7 +2132,7 @@ RVOP(
 RVOP(
     fcvtws,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         uint32_t ret = f32_to_i32(rv->F[ir->rs1], softfloat_roundingMode, true);
         if (ir->rd)
@@ -2150,7 +2147,7 @@ RVOP(
 RVOP(
     fcvtwus,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         uint32_t ret =
             f32_to_ui32(rv->F[ir->rs1], softfloat_roundingMode, true);
@@ -2166,7 +2163,7 @@ RVOP(
 RVOP(
     fmvxw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         if (ir->rd)
             rv->X[ir->rd] = rv->F[ir->rs1].v;
     },
@@ -2180,7 +2177,7 @@ RVOP(
 RVOP(
     feqs,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t ret = f32_eq(rv->F[ir->rs1], rv->F[ir->rs2]);
         if (ir->rd)
             rv->X[ir->rd] = ret;
@@ -2197,7 +2194,7 @@ RVOP(
 RVOP(
     flts,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t ret = f32_lt(rv->F[ir->rs1], rv->F[ir->rs2]);
         if (ir->rd)
             rv->X[ir->rd] = ret;
@@ -2210,7 +2207,7 @@ RVOP(
 RVOP(
     fles,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t ret = f32_le(rv->F[ir->rs1], rv->F[ir->rs2]);
         if (ir->rd)
             rv->X[ir->rd] = ret;
@@ -2224,7 +2221,7 @@ RVOP(
 RVOP(
     fclasss,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         if (ir->rd)
             rv->X[ir->rd] = calc_fclass(rv->F[ir->rs1].v);
     },
@@ -2236,7 +2233,7 @@ RVOP(
 RVOP(
     fcvtsw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         rv->F[ir->rd] = i32_to_f32(rv->X[ir->rs1]);
         set_fflag(rv);
@@ -2249,7 +2246,7 @@ RVOP(
 RVOP(
     fcvtswu,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         set_rounding_mode(rv, ir->rm);
         rv->F[ir->rd] = ui32_to_f32(rv->X[ir->rs1]);
         set_fflag(rv);
@@ -2262,7 +2259,7 @@ RVOP(
 RVOP(
     fmvwx,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->F[ir->rd].v = rv->X[ir->rs1]; },
     GEN({
         assert; /* FIXME: Implement */
@@ -2281,7 +2278,7 @@ RVOP(
 RVOP(
     caddi4spn,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[rv_reg_sp] + (uint16_t) ir->imm; },
     GEN({
         rald, VR0, rv_reg_sp;
@@ -2299,7 +2296,7 @@ RVOP(
 RVOP(
     clw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1] + (uint32_t) ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, true, 1);
@@ -2322,7 +2319,7 @@ RVOP(
 RVOP(
     csw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1] + (uint32_t) ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, STORE, true, 1);
@@ -2343,7 +2340,6 @@ RVOP(
 
 /* C.NOP */
 RVOP(cnop, {
-    // rv->insn_counter[ir->opcode]++;
     /* no operation */}, GEN({/* no operation */}))
 
 /* C.ADDI adds the non-zero sign-extended 6-bit immediate to the value in
@@ -2355,7 +2351,7 @@ RVOP(cnop, {
 RVOP(
     caddi,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] += (int16_t) ir->imm; },
     GEN({
         rald, VR0, rd;
@@ -2366,7 +2362,7 @@ RVOP(
 RVOP(
     cjal,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[rv_reg_ra] = PC + 2;
         PC += ir->imm;
         struct rv_insn *taken = ir->branch_taken;
@@ -2411,7 +2407,7 @@ RVOP(
 RVOP(
     cli,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = ir->imm; },
     GEN({
         map, VR0, rd;
@@ -2426,7 +2422,7 @@ RVOP(
 RVOP(
     caddi16sp,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] += ir->imm; },
     GEN({
         rald, VR0, rd;
@@ -2443,7 +2439,7 @@ RVOP(
 RVOP(
     clui,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = ir->imm; },
     GEN({
         map, VR0, rd;
@@ -2458,7 +2454,7 @@ RVOP(
 RVOP(
     csrli,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rs1] >>= ir->shamt; },
     GEN({
         rald, VR0, rs1;
@@ -2471,7 +2467,7 @@ RVOP(
 RVOP(
     csrai,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t mask = 0x80000000 & rv->X[ir->rs1];
         rv->X[ir->rs1] >>= ir->shamt;
         for (unsigned int i = 0; i < ir->shamt; ++i)
@@ -2490,7 +2486,7 @@ RVOP(
 RVOP(
     candi,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rs1] &= ir->imm; },
     GEN({
         rald, VR0, rs1;
@@ -2501,7 +2497,7 @@ RVOP(
 RVOP(
     csub,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] - rv->X[ir->rs2]; },
     GEN({
         rald2, rs1, rs2;
@@ -2515,7 +2511,7 @@ RVOP(
 RVOP(
     cxor,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] ^ rv->X[ir->rs2]; },
     GEN({
         rald2, rs1, rs2;
@@ -2528,7 +2524,7 @@ RVOP(
 RVOP(
     cor,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] | rv->X[ir->rs2]; },
     GEN({
         rald2, rs1, rs2;
@@ -2541,7 +2537,7 @@ RVOP(
 RVOP(
     cand,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] & rv->X[ir->rs2]; },
     GEN({
         rald2, rs1, rs2;
@@ -2559,7 +2555,7 @@ RVOP(
 RVOP(
     cj,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         PC += ir->imm;
         struct rv_insn *taken = ir->branch_taken;
         if (taken) {
@@ -2601,7 +2597,7 @@ RVOP(
 RVOP(
     cbeqz,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         if (rv->X[ir->rs1]) {
             is_branch_taken = false;
             struct rv_insn *untaken = ir->branch_untaken;
@@ -2681,7 +2677,7 @@ RVOP(
 RVOP(
     cbnez,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         if (!rv->X[ir->rs1]) {
             is_branch_taken = false;
             struct rv_insn *untaken = ir->branch_untaken;
@@ -2764,7 +2760,7 @@ RVOP(
 RVOP(
     cslli,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] <<= (uint8_t) ir->imm; },
     GEN({
         rald, VR0, rd;
@@ -2775,7 +2771,7 @@ RVOP(
 RVOP(
     clwsp,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[rv_reg_sp] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, true, 1);
@@ -2794,7 +2790,7 @@ RVOP(
 RVOP(
     cjr,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         PC = rv->X[ir->rs1];
         LOOKUP_OR_UPDATE_BRANCH_HISTORY_TABLE();
         goto end_op;
@@ -2812,7 +2808,7 @@ RVOP(
 RVOP(
     cmv,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs2]; },
     GEN({
         rald, VR0, rs2;
@@ -2828,7 +2824,7 @@ RVOP(
 RVOP(
     cebreak,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->compressed = true;
         rv->csr_cycle = cycle;
         rv->PC = PC;
@@ -2847,7 +2843,7 @@ RVOP(
 RVOP(
     cjalr,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         /* Unconditional jump and store PC+2 to ra */
         const int32_t jump_to = rv->X[ir->rs1];
         rv->X[rv_reg_ra] = PC + 2;
@@ -2879,7 +2875,7 @@ RVOP(
 RVOP(
     cadd,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] + rv->X[ir->rs2]; },
     GEN({
         rald2, rs1, rs2;
@@ -2893,7 +2889,7 @@ RVOP(
 RVOP(
     cswsp,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[rv_reg_sp] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, STORE, true, 1);
@@ -2918,7 +2914,7 @@ RVOP(
 RVOP(
     cflwsp,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[rv_reg_sp] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -2932,7 +2928,7 @@ RVOP(
 RVOP(
     cfswsp,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[rv_reg_sp] + ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, STORE, false, 1);
@@ -2950,7 +2946,7 @@ RVOP(
 RVOP(
     cflw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1] + (uint32_t) ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, LOAD, false, 1);
@@ -2964,7 +2960,7 @@ RVOP(
 RVOP(
     cfsw,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t addr = rv->X[ir->rs1] + (uint32_t) ir->imm;
         rv_trace_record(rv, cycle, PC, RV_TRACE_MEM, addr);
         RV_EXC_MISALIGN_HANDLER(3, STORE, false, 1);
@@ -2987,7 +2983,7 @@ RVOP(
 RVOP(
     sh1add,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = (rv->X[ir->rs1] << 1) + rv->X[ir->rs2]; },
     GEN({
         assert; /* FIXME: Implement */
@@ -2997,7 +2993,7 @@ RVOP(
 RVOP(
     sh2add,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = (rv->X[ir->rs1] << 2) + rv->X[ir->rs2]; },
     GEN({
         assert; /* FIXME: Implement */
@@ -3007,7 +3003,7 @@ RVOP(
 RVOP(
     sh3add,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = (rv->X[ir->rs1] << 3) + rv->X[ir->rs2]; },
     GEN({
         assert; /* FIXME: Implement */
@@ -3023,7 +3019,7 @@ RVOP(
 RVOP(
     andn,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] & (~rv->X[ir->rs2]); },
     GEN({
         assert; /* FIXME: Implement */
@@ -3033,7 +3029,7 @@ RVOP(
 RVOP(
     orn,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] | (~rv->X[ir->rs2]); },
     GEN({
         assert; /* FIXME: Implement */
@@ -3043,7 +3039,7 @@ RVOP(
 RVOP(
     xnor,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = ~(rv->X[ir->rs1] ^ rv->X[ir->rs2]); },
     GEN({
         assert; /* FIXME: Implement */
@@ -3053,7 +3049,7 @@ RVOP(
 RVOP(
     clz,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         if (rv->X[ir->rs1])
             rv->X[ir->rd] = rv_clz(rv->X[ir->rs1]);
         else
@@ -3067,7 +3063,7 @@ RVOP(
 RVOP(
     ctz,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         if (rv->X[ir->rs1])
             rv->X[ir->rd] = rv_ctz(rv->X[ir->rs1]);
         else
@@ -3081,7 +3077,7 @@ RVOP(
 RVOP(
     cpop,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv_popcount(rv->X[ir->rs1]); },
     GEN({
         assert; /* FIXME: Implement */
@@ -3091,7 +3087,7 @@ RVOP(
 RVOP(
     max,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const int32_t x = rv->X[ir->rs1];
         const int32_t y = rv->X[ir->rs2];
         rv->X[ir->rd] = x > y ? rv->X[ir->rs1] : rv->X[ir->rs2];
@@ -3104,7 +3100,7 @@ RVOP(
 RVOP(
     min,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const int32_t x = rv->X[ir->rs1];
         const int32_t y = rv->X[ir->rs2];
         rv->X[ir->rd] = x < y ? rv->X[ir->rs1] : rv->X[ir->rs2];
@@ -3117,7 +3113,7 @@ RVOP(
 RVOP(
     maxu,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t x = rv->X[ir->rs1];
         const uint32_t y = rv->X[ir->rs2];
         rv->X[ir->rd] = x > y ? rv->X[ir->rs1] : rv->X[ir->rs2];
@@ -3130,7 +3126,7 @@ RVOP(
 RVOP(
     minu,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t x = rv->X[ir->rs1];
         const uint32_t y = rv->X[ir->rs2];
         rv->X[ir->rd] = x < y ? rv->X[ir->rs1] : rv->X[ir->rs2];
@@ -3143,7 +3139,7 @@ RVOP(
 RVOP(
     sextb,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] & 0xff;
         if (rv->X[ir->rs1] & (1U << 7))
             rv->X[ir->rd] |= 0xffffff00;
@@ -3156,7 +3152,7 @@ RVOP(
 RVOP(
     sexth,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] & 0xffff;
         if (rv->X[ir->rs1] & (1U << 15))
             rv->X[ir->rd] |= 0xffff0000;
@@ -3169,7 +3165,7 @@ RVOP(
 RVOP(
     zexth,
     { 
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = rv->X[ir->rs1] & 0x0000ffff; },
     GEN({
         assert; /* FIXME: Implement */
@@ -3179,7 +3175,7 @@ RVOP(
 RVOP(
     rol,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int shamt = rv->X[ir->rs2] & 0b11111;
         rv->X[ir->rd] =
             (rv->X[ir->rs1] << shamt) | (rv->X[ir->rs1] >> (32 - shamt));
@@ -3192,7 +3188,7 @@ RVOP(
 RVOP(
     ror,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int shamt = rv->X[ir->rs2] & 0b11111;
         rv->X[ir->rd] =
             (rv->X[ir->rs1] >> shamt) | (rv->X[ir->rs1] << (32 - shamt));
@@ -3205,7 +3201,7 @@ RVOP(
 RVOP(
     rori,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int shamt = ir->imm & 0b11111;
         rv->X[ir->rd] =
             (rv->X[ir->rs1] >> shamt) | (rv->X[ir->rs1] << (32 - shamt));
@@ -3218,7 +3214,7 @@ RVOP(
 RVOP(
     orcb,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const uint32_t x = rv->X[ir->rs1];
         rv->X[ir->rd] = 0;
         for (int i = 0; i < 4; i++)
@@ -3233,7 +3229,7 @@ RVOP(
 RVOP(
     rev8,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         rv->X[ir->rd] = (((rv->X[ir->rs1] & 0xffU) << 24) |
                          ((rv->X[ir->rs1] & 0xff00U) << 8) |
                          ((rv->X[ir->rs1] & 0xff0000U) >> 8) |
@@ -3253,7 +3249,7 @@ RVOP(
 RVOP(
     clmul,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t output = 0;
         for (int i = 0; i < 32; i++)
             if ((rv->X[ir->rs2] >> i) & 1)
@@ -3268,7 +3264,7 @@ RVOP(
 RVOP(
     clmulh,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t output = 0;
         for (int i = 1; i < 32; i++)
             if ((rv->X[ir->rs2] >> i) & 1)
@@ -3283,7 +3279,7 @@ RVOP(
 RVOP(
     clmulr,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         uint32_t output = 0;
         for (int i = 0; i < 32; i++)
             if ((rv->X[ir->rs2] >> i) & 1)
@@ -3304,7 +3300,7 @@ RVOP(
 RVOP(
     bclr,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int index = rv->X[ir->rs2] & (32 - 1);
         rv->X[ir->rd] = rv->X[ir->rs1] & (~(1U << index));
     },
@@ -3316,7 +3312,7 @@ RVOP(
 RVOP(
     bclri,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int index = ir->imm & (32 - 1);
         rv->X[ir->rd] = rv->X[ir->rs1] & (~(1U << index));
     },
@@ -3328,7 +3324,7 @@ RVOP(
 RVOP(
     bext,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int index = rv->X[ir->rs2] & (32 - 1);
         rv->X[ir->rd] = (rv->X[ir->rs1] >> index) & 1;
     },
@@ -3340,7 +3336,7 @@ RVOP(
 RVOP(
     bexti,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int index = ir->imm & (32 - 1);
         rv->X[ir->rd] = (rv->X[ir->rs1] >> index) & 1;
     },
@@ -3352,7 +3348,7 @@ RVOP(
 RVOP(
     binv,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int index = rv->X[ir->rs2] & (32 - 1);
         rv->X[ir->rd] = rv->X[ir->rs1] ^ (1U << index);
     },
@@ -3364,7 +3360,7 @@ RVOP(
 RVOP(
     binvi,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int index = ir->imm & (32 - 1);
         rv->X[ir->rd] = rv->X[ir->rs1] ^ (1U << index);
     },
@@ -3376,7 +3372,7 @@ RVOP(
 RVOP(
     bset,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int index = rv->X[ir->rs2] & (32 - 1);
         rv->X[ir->rd] = rv->X[ir->rs1] | (1U << index);
     },
@@ -3388,7 +3384,7 @@ RVOP(
 RVOP(
     bseti,
     {
-        // rv->insn_counter[ir->opcode]++;
+
         const unsigned int index = ir->imm & (32 - 1);
         rv->X[ir->rd] = rv->X[ir->rs1] | (1U << index);
     },
