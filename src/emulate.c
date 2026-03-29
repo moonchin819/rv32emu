@@ -641,36 +641,62 @@ static inline void rv_trace_record(riscv_t *rv,
     fwrite(&record, sizeof(record), 1, rv->history_log);
 }
 
-#define RVOP(inst, code, asm)                                             \
-    static PRESERVE_NONE bool do_##inst(riscv_t *rv, const rv_insn_t *ir, \
-                                        uint64_t cycle, uint32_t PC)      \
-    {                                                                     \
-        rv_trace_record(rv, cycle, PC, RV_TRACE_INSN, 0);                  \
-        RVOP_SYNC_PC(rv, PC);                                             \
-        IIF(RV32_HAS(SYSTEM))(rv->timer++;, ) cycle++;                    \
-        rv->insn_counter[ir->opcode]++;                                   \
-        code;                                                             \
-        IIF(RV32_HAS(SYSTEM))(                                            \
-            if (need_handle_signal) {                                     \
-                need_handle_signal = false;                               \
-                return true;                                              \
-            }, ) nextop : PC += __rv_insn_##inst##_len;                   \
-        IIF(RV32_HAS(SYSTEM))(IIF(RV32_HAS(JIT))(                         \
-                                  , if (unlikely(need_clear_block_map)) { \
-                                      block_map_clear(rv);                \
-                                      need_clear_block_map = false;       \
-                                      rv->csr_cycle = cycle;              \
-                                      rv->PC = PC;                        \
-                                      return false;                       \
-                                  }), );                                  \
-        if (unlikely(RVOP_NO_NEXT(ir)))                                   \
-            goto end_op;                                                  \
-        const rv_insn_t *next = ir->next;                                 \
-        MUST_TAIL return next->impl(rv, next, cycle, PC);                 \
-    end_op:                                                               \
-        rv->csr_cycle = cycle;                                            \
-        rv->PC = PC;                                                      \
-        return true;                                                      \
+FORCE_INLINE bool insn_is_branch(uint8_t opcode);
+
+#define RVOP(inst, code)                                             \
+    static PRESERVE_NONE bool do_##inst(riscv_t *rv, const rv_insn_t *ir,           \
+                                        uint64_t cycle, uint32_t PC)                \
+    {                                                                               \
+        rv_trace_record(rv, cycle, PC, RV_TRACE_INSN, 0);                           \
+        RVOP_SYNC_PC(rv, PC);                                                       \
+        cycle++;                                                                    \
+        rv->insn_counter[ir->opcode]++;                                             \
+        code;                                                                       \
+        IIF(RV32_HAS(SYSTEM))(                                                      \
+            if (need_handle_signal) {                                               \
+                need_handle_signal = false;                                         \
+                return true;                                                        \
+            }, ) nextop : PC += __rv_insn_##inst##_len;                             \
+        IIF(RV32_HAS(SYSTEM))(IIF(RV32_HAS(JIT))(                                   \
+                                  , if (unlikely(need_clear_block_map)) {           \
+                                      block_map_clear(rv);                          \
+                                      need_clear_block_map = false;                 \
+                                      rv->csr_cycle = cycle;                        \
+                                      rv->PC = PC;                                  \
+                                      return false;                                 \
+                                  }), );                                            \
+        if (unlikely(RVOP_NO_NEXT(ir)))                                             \
+            goto end_op;                                                            \
+        const rv_insn_t *next = ir->next;                                           \
+        MUST_TAIL return next->impl(rv, next, cycle, PC);                           \
+    end_op:                                                                         \
+        IIF(RV32_HAS(BLOCK_CHAINING))(                                              \
+            {                                                                       \
+                /* Page-terminated block fallthrough: if branch_taken is            \
+                * set AND this is NOT a branch instruction, tail-call               \
+                * to next block. Branch instructions use branch_taken               \
+                * for the taken path, not fallthrough.                              \
+                */                                                                  \
+                if (!insn_is_branch(ir->opcode)) {                                  \
+                    struct rv_insn *taken = ir->branch_taken;                       \
+                    if (taken) {                                                    \
+                        IIF(RV32_HAS(SYSTEM))(                                      \
+                            if (!rv->is_trapped) {                                  \
+                                last_pc = PC;                                       \
+                                MUST_TAIL return taken->impl(rv, taken, cycle,      \
+                                                            PC);                    \
+                            },                                                      \
+                            {                                                       \
+                                last_pc = PC;                                       \
+                                MUST_TAIL return taken->impl(rv, taken, cycle,      \
+                                                            PC);                    \
+                            });                                                     \
+                    }                                                               \
+                }                                                                   \
+            }, );                                                                   \
+        rv->csr_cycle = cycle;                                                      \
+        rv->PC = PC;                                                                \
+        return true;                                                                \
     }
 
 #include "rv32_template.c"
