@@ -54,6 +54,15 @@ typedef struct {
  * detached and freed, and the stored information will be inherited by the new
  * entry.
  */
+
+#if RV32_HAS(JIT) && RV32_HAS(SYSTEM) && RV32_HAS(BLOCK_CHAINING)
+/* Page index entry: links blocks in the same page bucket */
+typedef struct page_block_entry {
+    void *block;                   /* pointer to block_t */
+    struct page_block_entry *next; /* next entry in bucket chain */
+} page_block_entry_t;
+#endif
+
 typedef struct cache {
     struct list_head list;       /* list of live cache */
     struct list_head ghost_list; /* list of evicted cache */
@@ -61,7 +70,23 @@ typedef struct cache {
     uint32_t size;
     uint32_t ghost_list_size;
     uint32_t capacity;
+#if RV32_HAS(JIT) && RV32_HAS(SYSTEM) && RV32_HAS(BLOCK_CHAINING)
+    /* Page index for O(1) invalidation by virtual address.
+     * Each bucket contains a linked list of blocks starting in that page.
+     */
+    page_block_entry_t *page_index[PAGE_INDEX_SIZE];
+    /* Flag indicating page index is incomplete due to malloc failure.
+     * When set, cache_invalidate_va must use O(n) fallback scan.
+     */
+    bool page_index_incomplete;
+#endif
 } cache_t;
+
+#if RV32_HAS(JIT) && RV32_HAS(SYSTEM) && RV32_HAS(BLOCK_CHAINING)
+/* Forward declarations for page index functions */
+static void page_index_insert(cache_t *cache, block_t *block);
+static void page_index_remove(cache_t *cache, block_t *block);
+#endif
 
 #define INIT_HLIST_HEAD(ptr) ((ptr)->first = NULL)
 
@@ -178,6 +203,12 @@ cache_t *cache_create(uint32_t size_bits)
     for (uint32_t i = 0; i < cache_size; i++)
         INIT_HLIST_HEAD(&cache->map.ht_list_head[i]);
 
+#if RV32_HAS(JIT) && RV32_HAS(SYSTEM) && RV32_HAS(BLOCK_CHAINING)
+    /* Initialize page index for O(1) invalidation lookup */
+    memset(cache->page_index, 0, sizeof(cache->page_index));
+    cache->page_index_incomplete = false;
+#endif
+
     return cache;
 
 fail_cache:
@@ -290,6 +321,11 @@ void *cache_put(cache_t *cache, uint32_t key, void *value)
         assert(replaced->alive);
 
         replaced_value = replaced->value;
+#if RV32_HAS(JIT) && RV32_HAS(SYSTEM) && RV32_HAS(BLOCK_CHAINING)
+        /* Remove replaced block from page index before eviction */
+        if (replaced_value)
+            page_index_remove(cache, (block_t *) replaced_value);
+#endif
         replaced->alive = false;
         list_del_init(&replaced->list);
         cache->size--;
@@ -333,6 +369,13 @@ void *cache_put(cache_t *cache, uint32_t key, void *value)
 
     cache->size++;
 
+#if RV32_HAS(JIT) && RV32_HAS(SYSTEM) && RV32_HAS(BLOCK_CHAINING)
+    /* Page index for O(1) invalidation - blocks are page-terminated
+     * and use fallthrough chaining for non-branch block boundaries.
+     */
+    page_index_insert(cache, (block_t *) value);
+#endif
+
     cache_ghost_list_update(cache);
 
     assert(cache->size <= cache->capacity);
@@ -342,6 +385,33 @@ void *cache_put(cache_t *cache, uint32_t key, void *value)
 
 void cache_free(cache_t *cache)
 {
+#if RV32_HAS(JIT) && RV32_HAS(SYSTEM) && RV32_HAS(BLOCK_CHAINING)
+    /* Free all page index entries */
+    for (uint32_t i = 0; i < PAGE_INDEX_SIZE; i++) {
+        page_block_entry_t *entry = cache->page_index[i];
+        while (entry) {
+            page_block_entry_t *next = entry->next;
+            free(entry);
+            entry = next;
+        }
+    }
+#endif
+    /* Free all live cache entries */
+    cache_entry_t *entry, *safe;
+#ifdef __HAVE_TYPEOF
+    list_for_each_entry_safe (entry, safe, &cache->list, list)
+#else
+    list_for_each_entry_safe (entry, safe, &cache->list, list, cache_entry_t)
+#endif
+        free(entry);
+    /* Free all ghost (evicted history) cache entries */
+#ifdef __HAVE_TYPEOF
+    list_for_each_entry_safe (entry, safe, &cache->ghost_list, list)
+#else
+    list_for_each_entry_safe (entry, safe, &cache->ghost_list, list,
+                              cache_entry_t)
+#endif
+        free(entry);
     free(cache->map.ht_list_head);
     free(cache);
 }
@@ -412,6 +482,12 @@ void cache_profile(const struct cache *cache,
     }
 }
 
+/* Disable UBSAN function pointer type check for indirect calls. When T2C is
+ * enabled, t2c_dispose_block_engine is compiled with LLVM's cflags which can
+ * cause function type metadata mismatch, triggering false positive UBSAN
+ * errors when called via clear_func_t.
+ */
+DISABLE_UBSAN_FUNC
 void clear_cache_hot(const struct cache *cache, clear_func_t func)
 {
     assert(cache);
@@ -428,6 +504,53 @@ void clear_cache_hot(const struct cache *cache, clear_func_t func)
     }
 }
 #endif
+
+#if RV32_HAS(JIT) && RV32_HAS(SYSTEM) && RV32_HAS(BLOCK_CHAINING)
+/* Page index functions for O(1) cache invalidation.
+ * Requires BLOCK_CHAINING for page-terminated blocks.
+ */
+
+/* Hash function for page index using golden ratio multiplicative hash */
+HASH_FUNC_IMPL(page_index_hash, PAGE_INDEX_BITS, PAGE_INDEX_SIZE)
+
+/* Insert a block into the page index */
+static void page_index_insert(cache_t *cache, block_t *block)
+{
+    uint32_t page = block->pc_start & ~(RV_PG_SIZE - 1);
+    uint32_t bucket = page_index_hash(page >> RV_PG_SHIFT);
+
+    page_block_entry_t *entry = malloc(sizeof(page_block_entry_t));
+    if (!entry) {
+        /* Mark page index as incomplete - cache_invalidate_va must use O(n)
+         * fallback to ensure all blocks are found during SFENCE.VMA.
+         */
+        cache->page_index_incomplete = true;
+        return;
+    }
+
+    entry->block = block;
+    entry->next = cache->page_index[bucket];
+    cache->page_index[bucket] = entry;
+}
+
+/* Remove a block from the page index */
+static void page_index_remove(cache_t *cache, block_t *block)
+{
+    uint32_t page = block->pc_start & ~(RV_PG_SIZE - 1);
+    uint32_t bucket = page_index_hash(page >> RV_PG_SHIFT);
+
+    page_block_entry_t **pp = &cache->page_index[bucket];
+    while (*pp) {
+        if ((*pp)->block == block) {
+            page_block_entry_t *tmp = *pp;
+            *pp = (*pp)->next;
+            free(tmp);
+            return;
+        }
+        pp = &(*pp)->next;
+    }
+}
+#endif /* RV32_HAS(JIT) && RV32_HAS(SYSTEM) && RV32_HAS(BLOCK_CHAINING) */
 
 #if RV32_HAS(JIT) && RV32_HAS(SYSTEM)
 /* Thread safety note: These invalidation functions assume single-threaded
@@ -452,6 +575,13 @@ uint32_t cache_invalidate_satp(cache_t *cache, uint32_t satp)
         block_t *block = (block_t *) entry->value;
         if (block && block->satp == satp && !block->invalidated) {
             block->invalidated = true;
+#if RV32_HAS(T2C)
+            /* Reset hot2 to prevent T2C execution of invalidated blocks.
+             * This ensures the T2C execution path in rv_step() will skip this
+             * block and fall through to re-translation.
+             */
+            ATOMIC_STORE(&block->hot2, false, ATOMIC_RELEASE);
+#endif
             count++;
         }
     }
@@ -463,10 +593,45 @@ uint32_t cache_invalidate_va(cache_t *cache, uint32_t va, uint32_t satp)
     if (unlikely(!cache->capacity))
         return 0;
 
-    /* Extract page-aligned VA for the target address */
     uint32_t va_page = va & ~(RV_PG_SIZE - 1);
     uint32_t count = 0;
 
+#if RV32_HAS(BLOCK_CHAINING)
+    /* If page index is complete, use O(1) lookup.
+     * Otherwise fall through to O(n) scan to ensure all blocks are found.
+     */
+    if (!cache->page_index_incomplete) {
+        /* O(1) lookup via page index.
+         * With page-bounded blocks, each block fits entirely within one 4KB
+         * page. We only need to check the bucket for this specific page.
+         */
+        uint32_t bucket = page_index_hash(va_page >> RV_PG_SHIFT);
+        page_block_entry_t *pentry = cache->page_index[bucket];
+        while (pentry) {
+            block_t *block = (block_t *) pentry->block;
+            if (block && block->satp == satp && !block->invalidated) {
+                /* Verify block belongs to this page (hash collision check) */
+                uint32_t block_page = block->pc_start & ~(RV_PG_SIZE - 1);
+                if (block_page == va_page) {
+                    block->invalidated = true;
+#if RV32_HAS(T2C)
+                    /* Reset hot2 to prevent T2C execution of invalidated blocks
+                     */
+                    ATOMIC_STORE(&block->hot2, false, ATOMIC_RELEASE);
+#endif
+                    count++;
+                }
+            }
+            pentry = pentry->next;
+        }
+        return count;
+    }
+#endif /* RV32_HAS(BLOCK_CHAINING) */
+
+    /* O(n) fallback: scan all blocks when page index is unavailable or
+     * incomplete. This ensures correctness when BLOCK_CHAINING is disabled,
+     * blocks may span pages, or malloc failed during page_index_insert.
+     */
     cache_entry_t *entry = NULL;
 #ifdef __HAVE_TYPEOF
     list_for_each_entry (entry, &cache->list, list)
@@ -493,9 +658,14 @@ uint32_t cache_invalidate_va(cache_t *cache, uint32_t va, uint32_t satp)
         uint32_t block_end_page = last_byte & ~(RV_PG_SIZE - 1);
         if (va_page >= block_start_page && va_page <= block_end_page) {
             block->invalidated = true;
+#if RV32_HAS(T2C)
+            /* Reset hot2 to prevent T2C execution of invalidated blocks */
+            ATOMIC_STORE(&block->hot2, false, ATOMIC_RELEASE);
+#endif
             count++;
         }
     }
+
     return count;
 }
-#endif
+#endif /* RV32_HAS(JIT) && RV32_HAS(SYSTEM) */

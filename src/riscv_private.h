@@ -23,6 +23,12 @@
 
 #define PRIV(x) ((vm_attr_t *) x->data)
 
+/* Maximum entries per fuse slot - limits fusion to 16 consecutive instructions.
+ * Larger sequences are rare and provide diminishing returns.
+ */
+#define FUSE_MAX_ENTRIES 16
+#define FUSE_SLOT_SIZE (FUSE_MAX_ENTRIES * sizeof(opcode_fuse_t))
+
 /* CSRs */
 enum {
     /* floating point */
@@ -100,8 +106,13 @@ typedef struct {
 typedef struct block {
     uint32_t n_insn;           /**< number of instructions encompassed */
     uint32_t pc_start, pc_end; /**< address range of the basic block */
+    uint32_t cycle_cost;       /**< cycle cost for block-level counting */
 
     rv_insn_t *ir_head, *ir_tail; /**< the first and last ir for this block */
+
+#if RV32_HAS(BLOCK_CHAINING)
+    bool page_terminated; /**< Block ended at page boundary (not a branch) */
+#endif
 
 #if RV32_HAS(SYSTEM_MMIO) && RV32_HAS(MOP_FUSION)
     uint8_t n_lazy_candidates; /**< number of lazy fusion candidates */
@@ -120,11 +131,16 @@ typedef struct block {
                        */
 #endif
 #if RV32_HAS(T2C)
-    bool compiled; /**< The T2C request is enqueued or not */
+    bool compiled;     /**< The T2C request is enqueued or not */
+    bool is_compiling; /**< T2C thread is currently processing this block */
+    bool should_free;  /**< Block was evicted while compiling, freed by T2C */
 #endif
     uint32_t offset;   /**< The machine code offset in T1 code cache */
     uint32_t n_invoke; /**< The invoking times of T1 machine code */
     void *func;        /**< The function pointer of T2 machine code */
+#if RV32_HAS(T2C)
+    void *llvm_engine; /**< LLVM execution engine (keeps func memory alive) */
+#endif
     struct list_head list;
 #endif
 } block_t;
@@ -132,7 +148,7 @@ typedef struct block {
 /* T2C implies JIT (enforced by Kconfig and feature.h) */
 #if RV32_HAS(T2C)
 typedef struct {
-    block_t *block;
+    uint64_t key; /**< cache key (PC or PC|SATP) to look up block */
     struct list_head list;
 } queue_entry_t;
 #endif
@@ -172,6 +188,47 @@ typedef struct {
     block_t **map;           /**< block map */
 } block_map_t;
 
+/* L1 direct-mapped block cache for fast block lookup.
+ * Inspired by rvdbt's tcache.h design.
+ * Expected gain: 5-15% by avoiding hash table lookup for hot loops.
+ *
+ * Design: Separated tag/pointer arrays for cache efficiency.
+ * - Tag array (1KB) checked first - fits in L1, good for miss path
+ * - Pointer array (2KB) loaded only on hit
+ * - Benchmarked faster than interleaved on x86-64 (+11.9% vs +8.8%)
+ */
+#define BLOCK_L1_SIZE 256
+#define BLOCK_L1_MASK (BLOCK_L1_SIZE - 1)
+
+/* Index shift for L1 cache lookup.
+ * With EXT_C: PCs can be half-word aligned, shift by 1 to use bit 1.
+ * Without EXT_C: PCs are word-aligned, shift by 2.
+ * Using correct shift reduces conflict misses in compressed code.
+ */
+#if RV32_HAS(EXT_C)
+#define BLOCK_L1_INDEX_SHIFT 1
+#else
+#define BLOCK_L1_INDEX_SHIFT 2
+#endif
+
+/* Cache line size for alignment (typical x86/Arm64). */
+#define CACHE_LINE_SIZE 64
+
+/* Invalid tag sentinel - guaranteed never to match a valid PC.
+ * Valid RISC-V PCs are word-aligned (or half-word for C extension),
+ * so a value with low bits set is always invalid.
+ */
+#define BLOCK_L1_INVALID_TAG 0xFFFFFFFFu
+
+/* L1 block cache with separated arrays for cache efficiency.
+ * Tag array checked first (1KB), pointer loaded only on hit (2KB).
+ * Separated layout benchmarked faster than interleaved on x86-64.
+ */
+typedef struct {
+    uint32_t tags[BLOCK_L1_SIZE]; /**< PC tags for fast comparison */
+    block_t *ptrs[BLOCK_L1_SIZE]; /**< block pointers, loaded on tag hit */
+} block_l1_cache_t;
+
 /* clear all block in the block map */
 void block_map_clear(riscv_t *rv);
 
@@ -195,18 +252,27 @@ typedef struct {
 } __attribute__((packed)) rv_trace_record_t;
 
 struct riscv_internal {
-    bool halt; /* indicate whether the core is halted */
+    bool halt; /**< indicate whether the core is halted */
 
-    /* integer registers */
-    /*
-     * Aarch64 encoder only accepts 9 bits signed offset. Do not put this
-     * structure below the section.
-     */
+    /* Integer registers - Aarch64 encoder needs 9-bit signed offset access */
     riscv_word_t X[N_RV_REGS];
     riscv_word_t PC;
 
     uint64_t insn_counter[256];
-    uint64_t timer; /* strictly increment timer */
+    uint64_t timer; /**< strictly increment timer */
+
+#if RV32_HAS(SYSTEM)
+    /* is_trapped must be within 256-byte offset for ARM64 JIT access */
+    bool is_trapped;
+#endif
+
+#if !RV32_HAS(JIT)
+    /* L1 block cache - tag/pointer separation for cache efficiency.
+     * Tags checked first (1KB), pointers loaded only on hit (2KB).
+     * Placed near hot fields for interpreter fast path.
+     */
+    block_l1_cache_t block_l1 __ALIGNED(CACHE_LINE_SIZE);
+#endif
 
     uint64_t branch_taken_forward;
     uint64_t branch_taken_backward;
@@ -225,10 +291,11 @@ struct riscv_internal {
      * structure below the section.
      */
     struct {
-        uint32_t is_mmio; /* whether is MMIO or not */
-        uint32_t type;    /* 0: read, 1: write */
+        uint8_t is_mmio; /* whether is MMIO or not (0=RAM, 1=MMIO/trap) */
+        uint32_t type;   /* instruction type for MMIO handler */
         uint32_t vaddr;
         uint32_t paddr;
+        uint32_t pc; /* PC of the instruction (for trap return address) */
     } jit_mmu;
 #endif
     /* user provided data */
@@ -277,19 +344,23 @@ struct riscv_internal {
 
     bool compressed; /**< current instruction is compressed or not */
 #if !RV32_HAS(JIT)
-    block_map_t block_map; /**< basic block map */
+    block_map_t block_map; /**< basic block map (fallback on L1 miss) */
 #else
     struct cache *block_cache;
     struct list_head block_list; /**< list of all translated blocks */
 #if RV32_HAS(T2C)
     struct list_head wait_queue;
     pthread_mutex_t wait_queue_lock, cache_lock;
-    volatile bool quit; /**< Determine the main thread is terminated or not */
+    pthread_cond_t wait_queue_cond;
+    bool quit; /**< termination flag, protected by wait_queue_lock */
 #endif
     void *jit_state;
     void *jit_cache;
+#if RV32_HAS(T2C)
+    void *inline_cache; /* Inline cache for fast indirect jump resolution */
 #endif
-    struct mpool *block_mp, *block_ir_mp;
+#endif
+    struct mpool *block_mp, *block_ir_mp, *fuse_mp;
 
 #if RV32_HAS(GDBSTUB)
     /* gdbstub instance */
@@ -307,9 +378,6 @@ struct riscv_internal {
 #endif
 
 #if RV32_HAS(SYSTEM)
-    /* The flag is used to indicate the current emulation is in a trap */
-    bool is_trapped;
-
     /* The flag that stores the SEPC CSR at the trap point for corectly
      * executing signal handler.
      */
@@ -324,6 +392,17 @@ struct riscv_internal {
      * Separate from dTLB for better hit rates and simpler permission checks.
      */
     tlb_entry_t itlb[TLB_SIZE];
+
+    /* Timer offset for deriving timer from cycle counter.
+     * timer = csr_cycle + timer_offset
+     * This avoids per-instruction timer increments in the main loop.
+     *
+     * Note: RISC-V spec defines TIME as a separate real-time counter from
+     * MTIME hardware. This emulator approximates TIME by deriving from CYCLE,
+     * which is acceptable for emulation but differs from real hardware where
+     * TIME would be independent of CPU frequency scaling or sleep states.
+     */
+    uint64_t timer_offset;
 #endif
 
 #if RV32_HAS(ARCH_TEST)

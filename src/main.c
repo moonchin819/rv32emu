@@ -309,12 +309,15 @@ int main(int argc, char **args)
         .args_offset_size = ARGS_OFFSET_SIZE,
         .argc = prog_argc,
         .argv = prog_args,
-        .log_level = LOG_TRACE,
+        .log_level = LOG_WARN,
         .run_flag = run_flag,
         .profile_output_file = prof_out_file,
         .cycle_per_step = CYCLE_PER_STEP,
         .allow_misalign = opt_misaligned,
         .history_bin_path = history_out_file,
+        .fd_stdin = STDIN_FILENO,
+        .fd_stdout = STDOUT_FILENO,
+        .fd_stderr = STDERR_FILENO,
     };
 #if RV32_HAS(SYSTEM_MMIO)
     attr.data.system.kernel = opt_kernel_img;

@@ -67,9 +67,41 @@
 #define MAX_JUMPS 1024
 #define MAX_BLOCKS 8192
 #define IN_JUMP_THRESHOLD 256
+
+/* Worst-case jump targets per instruction.  SYSTEM_MMIO load paths emit
+ * emit_jump_target_offset x4 (LOC_0, LOC_1, TRAP, NORMAL) plus emit_exit
+ * which itself records a jump target, totaling 5.  Branch epilogues also
+ * reach 5 (2x emit_jmp + 2x emit_exit + 1x emit_jump_target_offset).
+ */
+#define JUMPS_PER_INSN 5
+
+/* Check if branch history table entry should trigger JIT translation */
+static inline bool bht_should_translate(const branch_history_table_t *bt,
+                                        int idx
+#if RV32_HAS(SYSTEM)
+                                        ,
+                                        uint32_t csr_satp
+#endif
+)
+{
+    if (!bt->PC[idx] || bt->times[idx] < IN_JUMP_THRESHOLD)
+        return false;
+#if RV32_HAS(SYSTEM)
+    if (bt->satp[idx] != csr_satp)
+        return false;
+#endif
+    return true;
+}
+
 #if defined(__x86_64__)
-/* indicate where the immediate value is in the emitted jump instruction */
+/* indicate where the immediate value is in the emitted jump instruction.
+ * For conditional jumps (JNE, JE, etc.), add 2 to skip the 2-byte opcode
+ * (0x0f + condition). For unconditional jumps (JMP), add 1 to skip the
+ * 1-byte opcode (0xe9).
+ */
 #define JUMP_LOC_0 jump_loc_0 + 2
+#define JUMP_TRAP jump_trap + 2
+#define JUMP_NORMAL jump_normal + 1
 #if RV32_HAS(SYSTEM)
 #define JUMP_LOC_1 jump_loc_1 + 1
 #endif
@@ -97,8 +129,13 @@ enum x64_reg {
 };
 
 #elif defined(__aarch64__)
-/* indicate where the immediate value is in the emitted jump instruction */
+/* indicate where the immediate value is in the emitted jump instruction.
+ * For ARM64, the offset is embedded within the instruction word itself,
+ * so no additional offset adjustment is needed.
+ */
 #define JUMP_LOC_0 jump_loc_0
+#define JUMP_TRAP jump_trap
+#define JUMP_NORMAL jump_normal
 #if RV32_HAS(SYSTEM)
 #define JUMP_LOC_1 jump_loc_1
 #endif
@@ -714,6 +751,7 @@ static inline void emit_alu32(struct jit_state *state, int op, int src, int dst)
         __UNREACHABLE;
         break;
     }
+    set_dirty(dst, true);
 #endif
 }
 
@@ -749,6 +787,7 @@ static inline void emit_alu32_imm32(struct jit_state *state,
         __UNREACHABLE;
         break;
     }
+    set_dirty(dst, true);
 #endif
 }
 
@@ -780,6 +819,7 @@ static inline void emit_alu32_imm8(struct jit_state *state,
         __UNREACHABLE;
         break;
     }
+    set_dirty(dst, true);
 #endif
 }
 
@@ -801,7 +841,7 @@ static inline void emit_alu64(struct jit_state *state, int op, int src, int dst)
 #endif
 }
 
-#if RV32_HAS(EXT_M) || defined(__aarch64__)
+#if RV32_HAS(EXT_M)
 static inline void emit_alu64_imm8(struct jit_state *state,
                                    int op,
                                    int src UNUSED,
@@ -875,31 +915,31 @@ static inline void emit_jcc_offset(struct jit_state *state, int code)
 {
 #if defined(__x86_64__)
     /* unconditional jump instruction does not have 0x0f prefix */
-    if (code != 0xe9)
+    if (code != JCC_JMP)
         emit1(state, 0x0f);
     emit1(state, code);
     emit4(state, 0);
 #elif defined(__aarch64__)
     switch (code) {
-    case 0x84: /* BEQ */
+    case JCC_JE: /* BEQ */
         code = COND_EQ;
         break;
-    case 0x85: /* BNE */
+    case JCC_JNE: /* BNE */
         code = COND_NE;
         break;
-    case 0x8c: /* BLT */
+    case JCC_JL: /* BLT */
         code = COND_LT;
         break;
-    case 0x8d: /* BGE */
+    case JCC_JGE: /* BGE */
         code = COND_GE;
         break;
-    case 0x82: /* BLTU */
+    case JCC_JB: /* BLTU */
         code = COND_LO;
         break;
-    case 0x83: /* BGEU */
+    case JCC_JAE: /* BGEU */
         code = COND_HS;
         break;
-    case 0xe9: /* AL */
+    case JCC_JMP: /* AL */
         code = COND_AL;
         break;
     default:
@@ -1194,7 +1234,7 @@ static inline void emit_jmp(struct jit_state *state,
                             uint32_t target_satp UNUSED)
 {
 #if defined(__x86_64__)
-    emit1(state, 0xe9);
+    emit1(state, JCC_JMP);
     emit_jump_target_address(state, target_pc, target_satp);
 #elif defined(__aarch64__)
     assert(state->n_jumps < MAX_JUMPS);
@@ -1240,9 +1280,8 @@ static inline void emit_call(struct jit_state *state, intptr_t target)
 static inline void emit_exit(struct jit_state *state)
 {
 #if defined(__x86_64__)
-    emit1(state, 0xe9);
-    emit_jump_target_offset(state, state->offset, state->exit_loc);
-    emit4(state, 0);
+    emit1(state, JCC_JMP);
+    emit_jump_target_address(state, TARGET_PC_EXIT, 0);
 #elif defined(__aarch64__)
     emit_jmp(state, TARGET_PC_EXIT, 0);
 #endif
@@ -1293,7 +1332,7 @@ static void divmod(struct jit_state *state,
     if (sign) {
         /* handle overflow */
         uint32_t jump_loc_0 = state->offset;
-        emit_jcc_offset(state, 0x85);
+        emit_jcc_offset(state, JCC_JNE);
         emit_cmp_imm32(state, rm, -1);
         if (mod)
             emit_load_imm(state, R10, 0);
@@ -1402,7 +1441,7 @@ static void muldivmod(struct jit_state *state,
                 /* handle DIV overflow */
                 emit1(state, 0x9d); /* popfq */
                 uint32_t jump_loc_0 = state->offset;
-                emit_jcc_offset(state, 0x85);
+                emit_jcc_offset(state, JCC_JNE);
                 emit_cmp_imm32(state, RCX, 0x80000000);
                 emit_conditional_move(state, RCX, RAX);
                 emit_jump_target_offset(state, JUMP_LOC_0, state->offset);
@@ -1417,7 +1456,7 @@ static void muldivmod(struct jit_state *state,
                 /* handle REM overflow */
                 emit1(state, 0x9d); /* popfq */
                 uint32_t jump_loc_0 = state->offset;
-                emit_jcc_offset(state, 0x85);
+                emit_jcc_offset(state, JCC_JNE);
                 emit_cmp_imm32(state, RCX, 0x80000000);
                 emit_load_imm(state, RCX, 0);
                 emit_conditional_move(state, RCX, RDX);
@@ -1583,12 +1622,30 @@ void jit_mmu_handler(riscv_t *rv, uint32_t vreg_idx)
         __UNREACHABLE;
     }
 
+    /* Set rv->PC to the faulting instruction's PC BEFORE calling mem_translate.
+     * This is necessary because if a page fault occurs, on_trap is called from
+     * inside mem_translate (via SET_CAUSE_AND_TVAL_THEN_TRAP) and the trap
+     * handler uses rv->PC to set sepc/mepc (the return address). Without this,
+     * the kernel would resume at the wrong instruction after sret.
+     */
+    rv->PC = rv->jit_mmu.pc;
+
     if (rv->jit_mmu.type == rv_insn_lb || rv->jit_mmu.type == rv_insn_lh ||
         rv->jit_mmu.type == rv_insn_lbu || rv->jit_mmu.type == rv_insn_lhu ||
         rv->jit_mmu.type == rv_insn_lw)
         addr = rv->io.mem_translate(rv, rv->jit_mmu.vaddr, R);
     else
         addr = rv->io.mem_translate(rv, rv->jit_mmu.vaddr, W);
+
+    /* Check for trap during address translation.
+     * mem_translate may trigger a page fault which sets is_trapped=true.
+     * In this case, mark as MMIO to skip direct memory access in JIT code,
+     * but don't actually perform any MMIO operation.
+     */
+    if (rv->is_trapped) {
+        rv->jit_mmu.is_mmio = 1;
+        return;
+    }
 
     /* Only treat as RAM if entire access range [addr, addr+size) is within
      * valid guest memory bounds. This prevents buffer overflow on multi-byte
@@ -1785,6 +1842,15 @@ static inline void save_reg(struct jit_state *state, int idx)
     if (!register_map[idx].dirty)
         return;
 
+    /* Never save x0 - it's hardwired to zero. This allows using rv_reg_zero
+     * as a scratch register for temporary calculations without corrupting
+     * the zero register.
+     */
+    if (register_map[idx].vm_reg_idx == 0) {
+        register_map[idx].dirty = 0;
+        return;
+    }
+
     emit_store(state, S32, register_map[idx].reg_idx, parameter_reg[0],
                offsetof(riscv_t, X) + 4 * register_map[idx].vm_reg_idx);
     register_map[idx].dirty = 0;
@@ -1832,7 +1898,6 @@ static int liveness_cmp(const void *l, const void *r)
     return 0;
 }
 
-/* TODO: this function could be generated by "tools/gen-jit-template.py" */
 static inline void liveness_calc(block_t *block)
 {
     uint32_t idx;
@@ -2300,55 +2365,38 @@ void parse_branch_history_table(struct jit_state *state,
                                 riscv_t *rv UNUSED,
                                 rv_insn_t *ir)
 {
-    int max_idx = 0;
     branch_history_table_t *bt = ir->branch_table;
-    for (int i = 0; i < HISTORY_SIZE; i++) {
-        if (!bt->times[i])
-            break;
-        if (bt->times[max_idx] < bt->times[i])
-            max_idx = i;
-    }
-    if (bt->PC[max_idx] && bt->times[max_idx] >= IN_JUMP_THRESHOLD) {
-        IIF(RV32_HAS(SYSTEM))(if (bt->satp[max_idx] == rv->csr_satp), )
-        {
-            save_reg(state, 0);
-            unmap_vm_reg(0);
-            emit_load_imm(state, register_map[0].reg_idx, bt->PC[max_idx]);
-            emit_cmp32(state, temp_reg, register_map[0].reg_idx);
-            uint32_t jump_loc_0 = state->offset;
-            emit_jcc_offset(state, 0x85);
+    int max_idx = bht_find_max_idx(bt);
 #if RV32_HAS(SYSTEM)
-            emit_jmp(state, bt->PC[max_idx], bt->satp[max_idx]);
+    if (!bht_should_translate(bt, max_idx, rv->csr_satp))
+        return;
 #else
-            emit_jmp(state, bt->PC[max_idx], 0);
+    if (!bht_should_translate(bt, max_idx))
+        return;
 #endif
-            emit_jump_target_offset(state, JUMP_LOC_0, state->offset);
-        }
-    }
+    save_reg(state, 0);
+    unmap_vm_reg(0);
+    emit_load_imm(state, register_map[0].reg_idx, bt->PC[max_idx]);
+    emit_cmp32(state, temp_reg, register_map[0].reg_idx);
+    uint32_t jump_loc_0 = state->offset;
+    emit_jcc_offset(state, JCC_JNE);
+#if RV32_HAS(SYSTEM)
+    emit_jmp(state, bt->PC[max_idx], bt->satp[max_idx]);
+#else
+    emit_jmp(state, bt->PC[max_idx], 0);
+#endif
+    emit_jump_target_offset(state, JUMP_LOC_0, state->offset);
 }
 
-void emit_jit_inc_timer(struct jit_state *state)
-{
-#if defined(__x86_64__)
-    /* Increment rv->timer. *rv pointer is stored in RDI register */
-    /* INC RDI, [rv + offsetof(riscv_t, timer)] */
-    emit_rex(state, 1, 0, 0, 0);
-    emit1(state, 0xff);
-    emit1(state, 0x87);
-    emit4(state, offsetof(riscv_t, timer));
-#elif defined(__aarch64__)
-    emit_load(state, S64, parameter_reg[0], temp_reg, offsetof(riscv_t, timer));
-    emit_alu64_imm8(state, 0, 0, temp_reg, 1);
-    emit_store(state, S64, temp_reg, parameter_reg[0],
-               offsetof(riscv_t, timer));
-#endif
-}
+/* Timer increment removed: timer is now derived from cycle counter at
+ * interrupt check points (rv_check_interrupt) rather than per-instruction.
+ * This eliminates per-instruction memory operations in the JIT hot path.
+ */
 
 #define GEN(inst, code)                                                       \
     static void do_##inst(struct jit_state *state UNUSED, riscv_t *rv UNUSED, \
                           rv_insn_t *ir UNUSED)                               \
     {                                                                         \
-        emit_jit_inc_timer(state);                                            \
         code;                                                                 \
     }
 #include "rv32_jit.c"
@@ -2501,9 +2549,79 @@ static void do_fuse9(struct jit_state *state, riscv_t *rv, rv_insn_t *ir)
 {
     memory_t *m = PRIV(rv)->mem;
     uint32_t addr = (uint32_t) ir->imm + (uint32_t) ir->imm2;
-    emit_load_imm_sext(state, temp_reg, (intptr_t) (m->mem_base + addr));
+#if RV32_HAS(SYSTEM_MMIO)
+    /* Write LUI result to rd - required when rd != LW destination.
+     * LUI completes before LW, so this write happens even if LW faults.
+     */
+    vm_reg[0] = map_vm_reg(state, ir->rd);
+    emit_load_imm(state, vm_reg[0], ir->imm);
+
+    /* Store virtual address and type for MMU translation */
+    emit_load_imm(state, temp_reg, addr);
+    emit_store(state, S32, temp_reg, parameter_reg[0],
+               offsetof(riscv_t, jit_mmu.vaddr));
+    emit_load_imm(state, temp_reg, rv_insn_lw);
+    emit_store(state, S32, temp_reg, parameter_reg[0],
+               offsetof(riscv_t, jit_mmu.type));
+    /* Store instruction PC for trap return address */
+    emit_load_imm(state, temp_reg, ir->pc);
+    emit_store(state, S32, temp_reg, parameter_reg[0],
+               offsetof(riscv_t, jit_mmu.pc));
+
+    store_back(state);
+    emit_jit_mmu_handler(state, ir->rs2);
+    reset_reg();
+
+    /* Check if trap occurred during MMU translation.
+     * If trapped, skip the load entirely to avoid loading garbage.
+     */
+    emit_load(state, S8, parameter_reg[0], temp_reg,
+              offsetof(riscv_t, is_trapped));
+    emit_cmp_imm32(state, temp_reg, 0);
+    uint32_t jump_trap = state->offset;
+    emit_jcc_offset(state, JCC_JNE); /* Jump to end if trapped */
+
+    /* If MMIO, value already in X[rd]; otherwise load from translated paddr */
+    emit_load(state, S8, parameter_reg[0], temp_reg,
+              offsetof(riscv_t, jit_mmu.is_mmio));
+    emit_cmp_imm32(state, temp_reg, 0);
     vm_reg[0] = map_vm_reg(state, ir->rs2);
-    emit_load(state, S32, temp_reg, vm_reg[0], 0);
+    uint32_t jump_loc_0 = state->offset;
+    emit_jcc_offset(state, JCC_JE);
+
+    /* MMIO path: load from X[rd] */
+    emit_load(state, S32, parameter_reg[0], vm_reg[0],
+              offsetof(riscv_t, X) + 4 * ir->rs2);
+    uint32_t jump_loc_1 = state->offset;
+    emit_jcc_offset(state, JCC_JMP);
+
+    /* RAM path: load from mem_base + paddr.
+     * Reuse vm_reg[0] (already mapped to ir->rs2) for address calculation,
+     * then load into the same register - matches GEN_LOAD pattern.
+     */
+    emit_jump_target_offset(state, JUMP_LOC_0, state->offset);
+    emit_load(state, S32, parameter_reg[0], temp_reg,
+              offsetof(riscv_t, jit_mmu.paddr));
+    emit_load_imm_sext(state, vm_reg[0], (intptr_t) m->mem_base);
+    emit_alu64(state, ALU_OP_ADD, temp_reg, vm_reg[0]);
+    emit_load(state, S32, vm_reg[0], vm_reg[0], 0);
+    emit_jump_target_offset(state, JUMP_LOC_1, state->offset);
+    /* Jump over trap exit to continue normally */
+    uint32_t jump_normal = state->offset;
+    emit_jcc_offset(state, JCC_JMP);
+    /* Trap exit point - exit JIT block for trap handling */
+    emit_jump_target_offset(state, JUMP_TRAP, state->offset);
+    emit_exit(state);
+    /* Normal continuation point */
+    emit_jump_target_offset(state, JUMP_NORMAL, state->offset);
+#else
+    /* Write LUI result to rd - required when rd != LW destination */
+    vm_reg[0] = map_vm_reg(state, ir->rd);
+    emit_load_imm(state, vm_reg[0], ir->imm);
+    emit_load_imm_sext(state, temp_reg, (intptr_t) (m->mem_base + addr));
+    vm_reg[1] = map_vm_reg(state, ir->rs2);
+    emit_load(state, S32, temp_reg, vm_reg[1], 0);
+#endif
 }
 
 /* fused LUI + SW: absolute address store
@@ -2514,9 +2632,73 @@ static void do_fuse10(struct jit_state *state, riscv_t *rv, rv_insn_t *ir)
 {
     memory_t *m = PRIV(rv)->mem;
     uint32_t addr = (uint32_t) ir->imm + (uint32_t) ir->imm2;
-    vm_reg[0] = ra_load(state, ir->rs1);
+#if RV32_HAS(SYSTEM_MMIO)
+    /* Write LUI result to rd - SW doesn't write registers, so rd may be
+     * used later. LUI completes before SW, so this write happens even if
+     * SW faults.
+     */
+    vm_reg[0] = map_vm_reg(state, ir->rd);
+    emit_load_imm(state, vm_reg[0], ir->imm);
+
+    /* Store virtual address and type for MMU translation */
+    emit_load_imm(state, temp_reg, addr);
+    emit_store(state, S32, temp_reg, parameter_reg[0],
+               offsetof(riscv_t, jit_mmu.vaddr));
+    emit_load_imm(state, temp_reg, rv_insn_sw);
+    emit_store(state, S32, temp_reg, parameter_reg[0],
+               offsetof(riscv_t, jit_mmu.type));
+    /* Store instruction PC for trap return address */
+    emit_load_imm(state, temp_reg, ir->pc);
+    emit_store(state, S32, temp_reg, parameter_reg[0],
+               offsetof(riscv_t, jit_mmu.pc));
+    store_back(state);
+    emit_jit_mmu_handler(state, ir->rs1);
+    reset_reg();
+
+    /* Check if trap occurred - skip store if trapped */
+    emit_load(state, S8, parameter_reg[0], temp_reg,
+              offsetof(riscv_t, is_trapped));
+    emit_cmp_imm32(state, temp_reg, 0);
+    uint32_t jump_trap = state->offset;
+    emit_jcc_offset(state, JCC_JNE); /* Jump to end if trapped */
+
+    /* If MMIO, skip store (handled by MMU handler) */
+    emit_load(state, S8, parameter_reg[0], temp_reg,
+              offsetof(riscv_t, jit_mmu.is_mmio));
+    emit_cmp_imm32(state, temp_reg, 1);
+    uint32_t jump_loc_0 = state->offset;
+    emit_jcc_offset(state, JCC_JE);
+
+    /* RAM path: store to mem_base + paddr.
+     * SW doesn't write registers, so rd can be used as scratch.
+     * Note: Cannot use rv_reg_zero as scratch because emit_load has special
+     * handling that returns 0 for any load targeting a register mapped to x0.
+     */
+    emit_load(state, S32, parameter_reg[0], temp_reg,
+              offsetof(riscv_t, jit_mmu.paddr));
+    vm_reg[0] = map_vm_reg(state, ir->rd);
+    emit_load_imm_sext(state, vm_reg[0], (intptr_t) m->mem_base);
+    emit_alu64(state, ALU_OP_ADD, temp_reg, vm_reg[0]);
+    vm_reg[1] = ra_load(state, ir->rs1);
+    emit_store(state, S32, vm_reg[1], vm_reg[0], 0);
+    emit_jump_target_offset(state, JUMP_LOC_0, state->offset);
+    /* Jump over trap exit to continue normally */
+    uint32_t jump_normal = state->offset;
+    emit_jcc_offset(state, JCC_JMP);
+    /* Trap exit point - exit JIT block for trap handling */
+    emit_jump_target_offset(state, JUMP_TRAP, state->offset);
+    emit_exit(state);
+    /* Normal continuation point */
+    emit_jump_target_offset(state, JUMP_NORMAL, state->offset);
+    reset_reg();
+#else
+    /* Write LUI result to rd - SW doesn't write registers, so rd may be used */
+    vm_reg[0] = map_vm_reg(state, ir->rd);
+    emit_load_imm(state, vm_reg[0], ir->imm);
+    vm_reg[1] = ra_load(state, ir->rs1);
     emit_load_imm_sext(state, temp_reg, (intptr_t) (m->mem_base + addr));
-    emit_store(state, S32, vm_reg[0], temp_reg, 0);
+    emit_store(state, S32, vm_reg[1], temp_reg, 0);
+#endif
 }
 
 /* fused LW + ADDI (post-increment load)
@@ -2527,6 +2709,76 @@ static void do_fuse10(struct jit_state *state, riscv_t *rv, rv_insn_t *ir)
 static void do_fuse11(struct jit_state *state, riscv_t *rv, rv_insn_t *ir)
 {
     memory_t *m = PRIV(rv)->mem;
+#if RV32_HAS(SYSTEM_MMIO)
+    /* Compute virtual address: rs1 + imm */
+    vm_reg[0] = ra_load(state, ir->rs1);
+    emit_load_imm_sext(state, temp_reg, ir->imm);
+    emit_alu32(state, ALU_OP_ADD, vm_reg[0], temp_reg);
+    emit_store(state, S32, temp_reg, parameter_reg[0],
+               offsetof(riscv_t, jit_mmu.vaddr));
+    emit_load_imm(state, temp_reg, rv_insn_lw);
+    emit_store(state, S32, temp_reg, parameter_reg[0],
+               offsetof(riscv_t, jit_mmu.type));
+    /* Store instruction PC for trap return address */
+    emit_load_imm(state, temp_reg, ir->pc);
+    emit_store(state, S32, temp_reg, parameter_reg[0],
+               offsetof(riscv_t, jit_mmu.pc));
+
+    store_back(state);
+    emit_jit_mmu_handler(state, ir->rd);
+    reset_reg();
+
+    /* Check if trap occurred during MMU translation.
+     * If trapped, skip the load and post-increment entirely.
+     * is_trapped is set by jit_mmu_handler when mem_translate faults.
+     */
+    emit_load(state, S8, parameter_reg[0], temp_reg,
+              offsetof(riscv_t, is_trapped));
+    emit_cmp_imm32(state, temp_reg, 0);
+    uint32_t jump_trap = state->offset;
+    emit_jcc_offset(state, JCC_JNE); /* Jump to end if trapped */
+
+    /* If MMIO, value already in X[rd]; otherwise load from translated paddr */
+    emit_load(state, S8, parameter_reg[0], temp_reg,
+              offsetof(riscv_t, jit_mmu.is_mmio));
+    emit_cmp_imm32(state, temp_reg, 0);
+    vm_reg[0] = map_vm_reg(state, ir->rd);
+    uint32_t jump_loc_0 = state->offset;
+    emit_jcc_offset(state, JCC_JE);
+
+    /* MMIO path: load from X[rd] */
+    emit_load(state, S32, parameter_reg[0], vm_reg[0],
+              offsetof(riscv_t, X) + 4 * ir->rd);
+    uint32_t jump_loc_1 = state->offset;
+    emit_jcc_offset(state, JCC_JMP);
+
+    /* RAM path: load from mem_base + paddr.
+     * Reuse vm_reg[0] (already mapped to ir->rd) for address calculation,
+     * then load into the same register - matches GEN_LOAD pattern.
+     */
+    emit_jump_target_offset(state, JUMP_LOC_0, state->offset);
+    emit_load(state, S32, parameter_reg[0], temp_reg,
+              offsetof(riscv_t, jit_mmu.paddr));
+    emit_load_imm_sext(state, vm_reg[0], (intptr_t) m->mem_base);
+    emit_alu64(state, ALU_OP_ADD, temp_reg, vm_reg[0]);
+    emit_load(state, S32, vm_reg[0], vm_reg[0], 0);
+    emit_jump_target_offset(state, JUMP_LOC_1, state->offset);
+
+    /* Post-increment rs1 by imm2 (only executed if no trap).
+     * Must use ra_load to load rs1's value from memory since reset_reg() was
+     * called after store_back(). Without loading, we'd increment garbage.
+     */
+    vm_reg[0] = ra_load(state, ir->rs1);
+    emit_alu32_imm32(state, 0x81, 0, vm_reg[0], ir->imm2);
+    /* Jump over trap exit to continue normally */
+    uint32_t jump_normal = state->offset;
+    emit_jcc_offset(state, JCC_JMP);
+    /* Trap exit point - exit JIT block for trap handling */
+    emit_jump_target_offset(state, JUMP_TRAP, state->offset);
+    emit_exit(state);
+    /* Normal continuation point */
+    emit_jump_target_offset(state, JUMP_NORMAL, state->offset);
+#else
     vm_reg[0] = ra_load(state, ir->rs1);
     /* Compute address: mem_base + rs1 + imm */
     emit_load_imm_sext(state, temp_reg, (intptr_t) (m->mem_base + ir->imm));
@@ -2537,6 +2789,8 @@ static void do_fuse11(struct jit_state *state, riscv_t *rv, rv_insn_t *ir)
     /* Increment rs1 by imm2 */
     vm_reg[0] = map_vm_reg(state, ir->rs1);
     emit_alu32_imm32(state, 0x81, 0, vm_reg[0], ir->imm2);
+    set_dirty(vm_reg[0], true); /* Mark rs1 dirty so it's saved to memory */
+#endif
 }
 
 /* fused ADDI + BNE (loop counter decrement-branch)
@@ -2602,6 +2856,7 @@ static void code_cache_flush(struct jit_state *state, riscv_t *rv)
     clear_cache_hot(rv->block_cache, (clear_func_t) clear_hot);
 #if RV32_HAS(T2C)
     jit_cache_clear(rv->jit_cache);
+    inline_cache_clear(rv->inline_cache);
 #endif
     return;
 }
@@ -2623,6 +2878,26 @@ static void translate(struct jit_state *state, riscv_t *rv, block_t *block)
         regs_refresh(idx);
         ((codegen_block_func_t) dispatch_table[ir->opcode])(state, rv, ir);
     }
+
+#if RV32_HAS(BLOCK_CHAINING)
+    /* Page-terminated block fallthrough: emit jump to next block or exit.
+     * Unlike branch-terminated blocks, page-terminated blocks always fall
+     * through to the next sequential address (pc_end).
+     */
+    if (block->page_terminated && !should_flush) {
+        ir = block->ir_tail;
+        store_back(state);
+        if (ir->branch_taken) {
+            /* Fallthrough chain established - jump to next block */
+            emit_jmp(state, block->pc_end, rv->csr_satp);
+        }
+        /* Store PC and exit for un-chained path */
+        emit_load_imm(state, temp_reg, block->pc_end);
+        emit_store(state, S32, temp_reg, parameter_reg[0],
+                   offsetof(riscv_t, PC));
+        emit_exit(state);
+    }
+#endif
 }
 
 static void resolve_jumps(struct jit_state *state)
@@ -2684,7 +2959,16 @@ static void translate_chained_block(struct jit_state *state,
     if (state->n_blocks == MAX_BLOCKS)
         return;
 
-    assert(set_add(&state->set, RV_HASH_KEY(block)));
+    /* Check whether the remaining jump slots can accommodate this block.
+     * Each instruction emits up to JUMPS_PER_INSN jump targets (SYSTEM_MMIO
+     * load paths are the worst case) plus up to 2 for a page-terminated
+     * block epilogue (emit_jmp + emit_exit).
+     */
+    if (state->n_jumps + block->n_insn * JUMPS_PER_INSN + 2 >= MAX_JUMPS)
+        return;
+
+    bool added UNUSED = set_add(&state->set, RV_HASH_KEY(block));
+    assert(added);
     offset_map_insert(state, block);
     translate(state, rv, block);
     if (unlikely(should_flush))
@@ -2711,30 +2995,26 @@ static void translate_chained_block(struct jit_state *state,
 
     branch_history_table_t *bt = ir->branch_table;
     if (bt) {
-        int max_idx = 0;
-        for (int i = 0; i < HISTORY_SIZE; i++) {
-            if (!bt->times[i])
-                break;
-            if (bt->times[max_idx] < bt->times[i])
-                max_idx = i;
-        }
-        if (bt->PC[max_idx] && bt->times[max_idx] >= IN_JUMP_THRESHOLD &&
+        int max_idx = bht_find_max_idx(bt);
+#if RV32_HAS(SYSTEM)
+        if (bht_should_translate(bt, max_idx, rv->csr_satp) &&
             !set_has(&state->set, bt->PC[max_idx])) {
-            IIF(RV32_HAS(SYSTEM))(if (bt->satp[max_idx] == rv->csr_satp), )
-            {
-                block_t *block1 =
-                    cache_get(rv->block_cache, bt->PC[max_idx], false);
-                if (block1 && block1->translatable) {
-                    IIF(RV32_HAS(SYSTEM))(if (block1->satp == rv->csr_satp &&
-                                              !block1->invalidated), )
-                        translate_chained_block(state, rv, block1);
-                }
+#else
+        if (bht_should_translate(bt, max_idx) &&
+            !set_has(&state->set, bt->PC[max_idx])) {
+#endif
+            block_t *block1 =
+                cache_get(rv->block_cache, bt->PC[max_idx], false);
+            if (block1 && block1->translatable) {
+                IIF(RV32_HAS(SYSTEM))(
+                    if (block1->satp == rv->csr_satp && !block1->invalidated), )
+                    translate_chained_block(state, rv, block1);
             }
         }
     }
 }
 
-void jit_translate(riscv_t *rv, block_t *block)
+bool jit_translate(riscv_t *rv, block_t *block)
 {
     struct jit_state *state = rv->jit_state;
     if (set_has(&state->set, RV_HASH_KEY(block))) {
@@ -2747,7 +3027,7 @@ void jit_translate(riscv_t *rv, block_t *block)
             ) {
                 block->offset = state->offset_map[i].offset;
                 block->hot = true;
-                return;
+                return true;
             }
         }
         assert(NULL);
@@ -2772,6 +3052,19 @@ restart:
         code_cache_flush(state, rv);
         goto restart;
     }
+
+    /* If the root block was not translated (e.g. jump budget exhausted on
+     * the very first call to translate_chained_block), bail out without
+     * marking the block hot.  Otherwise resolve_jumps and cache maintenance
+     * would operate on an empty / stale code region.
+     */
+    if (!set_has(&state->set, RV_HASH_KEY(block))) {
+#if defined(__APPLE__) && defined(__aarch64__)
+        jit_exit_write_mode();
+#endif
+        return false;
+    }
+
     resolve_jumps(state);
 #if defined(__aarch64__)
     /* Cache maintenance after patching branch immediates.
@@ -2793,6 +3086,7 @@ restart:
     __asm__ volatile("isb" ::: "memory");
 #endif
     block->hot = true;
+    return true;
 }
 
 struct jit_state *jit_state_init(size_t size)

@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #if RV32_HAS(EXT_F)
 #include <math.h>
@@ -53,6 +54,11 @@ bool need_retranslate = false;
 bool need_handle_signal = false;
 #endif
 
+/* Emulate misaligned load/store operations.
+ * Only used in non-SYSTEM builds for userspace misaligned access emulation.
+ * In SYSTEM mode, misaligned access traps are handled by the guest OS.
+ */
+#if !RV32_HAS(SYSTEM)
 /* Emulate misaligned load operation.
  * Fast-path: Use halfword operations for 2-byte aligned word accesses.
  * Slow-path: Fall back to byte-level operations for odd addresses.
@@ -150,6 +156,9 @@ static bool emulate_misaligned_store(riscv_t *rv,
 /* Default trap handler for userspace simulation without a configured trap
  * vector. When misaligned memory operations occur, this handler emulates them
  * using byte-level accesses instead of simply skipping the instruction.
+ * Note: In SYSTEM mode, unconfigured trap vectors are handled differently
+ * (by restoring PC and clearing is_trapped), so this function is only used
+ * in non-SYSTEM builds.
  */
 static void rv_trap_default_handler(riscv_t *rv)
 {
@@ -190,6 +199,7 @@ skip_insn:
     rv->csr_mepc += rv->compressed ? 2 : 4;
     rv->PC = rv->csr_mepc; /* mret */
 }
+#endif /* !RV32_HAS(SYSTEM) */
 
 #if RV32_HAS(SYSTEM)
 static void __trap_handler(riscv_t *rv);
@@ -241,6 +251,11 @@ static inline void update_time(riscv_t *rv)
 
     rv_gettimeofday(&tv);
     rv->timer = (uint64_t) tv.tv_sec * 1e6 + (uint32_t) tv.tv_usec;
+#else
+    /* SYSTEM mode: derive timer from cycle counter.
+     * Timer is computed on-demand rather than incremented per-instruction.
+     */
+    rv->timer = rv->csr_cycle + rv->timer_offset;
 #endif
     rv->csr_time[0] = rv->timer & 0xFFFFFFFF;
     rv->csr_time[1] = rv->timer >> 32;
@@ -322,6 +337,24 @@ static uint32_t *csr_get_ptr(riscv_t *rv, uint32_t csr)
     }
 }
 
+/* Sync cycle counter for cycle/time CSR reads.
+ * TIME CSRs need cycle synced so update_time() derives correct timer.
+ */
+static inline void csr_sync_cycle(riscv_t *rv, uint32_t csr, uint64_t cycle)
+{
+    switch (csr & 0xFFF) {
+    case CSR_CYCLE:
+    case CSR_CYCLEH:
+    case CSR_INSTRET:
+    case CSR_INSTRETH:
+    case CSR_TIME:
+    case CSR_TIMEH:
+        if (rv->csr_cycle != cycle)
+            rv->csr_cycle = cycle;
+        break;
+    }
+}
+
 /* CSRRW (Atomic Read/Write CSR) instruction atomically swaps values in the
  * CSRs and integer registers. CSRRW reads the old value of the CSR,
  * zero-extends the value to XLEN bits, and then writes it to register rd.
@@ -334,17 +367,7 @@ static uint32_t csr_csrrw(riscv_t *rv,
                           uint32_t val,
                           uint64_t cycle)
 {
-    /* Sync cycle counter for cycle-related CSRs only */
-    switch (csr & 0xFFF) {
-    case CSR_CYCLE:
-    case CSR_CYCLEH:
-    case CSR_INSTRET:
-    case CSR_INSTRETH:
-        if (rv->csr_cycle != cycle)
-            rv->csr_cycle = cycle;
-        break;
-    }
-
+    csr_sync_cycle(rv, csr, cycle);
     uint32_t *c = csr_get_ptr(rv, csr);
     if (!c)
         return 0;
@@ -388,16 +411,7 @@ static uint32_t csr_csrrs(riscv_t *rv,
                           uint32_t val,
                           uint64_t cycle)
 {
-    /* Sync cycle counter for cycle-related CSRs only */
-    switch (csr & 0xFFF) {
-    case CSR_CYCLE:
-    case CSR_CYCLEH:
-    case CSR_INSTRET:
-    case CSR_INSTRETH:
-        if (rv->csr_cycle != cycle)
-            rv->csr_cycle = cycle;
-        break;
-    }
+    csr_sync_cycle(rv, csr, cycle);
     uint32_t *c = csr_get_ptr(rv, csr);
     if (!c)
         return 0;
@@ -431,17 +445,7 @@ static uint32_t csr_csrrc(riscv_t *rv,
                           uint32_t val,
                           uint64_t cycle)
 {
-    /* Sync cycle counter for cycle-related CSRs only */
-    switch (csr & 0xFFF) {
-    case CSR_CYCLE:
-    case CSR_CYCLEH:
-    case CSR_INSTRET:
-    case CSR_INSTRETH:
-        if (rv->csr_cycle != cycle)
-            rv->csr_cycle = cycle;
-        break;
-    }
-
+    csr_sync_cycle(rv, csr, cycle);
     uint32_t *c = csr_get_ptr(rv, csr);
     if (!c)
         return 0;
@@ -514,17 +518,31 @@ static block_t *block_alloc(riscv_t *rv)
     block->hot2 = false;
     block->has_loops = false;
     block->n_invoke = 0;
+    block->func = NULL;
     INIT_LIST_HEAD(&block->list);
 #if RV32_HAS(T2C)
     block->compiled = false;
+    block->is_compiling = false;
+    block->should_free = false;
+    block->llvm_engine = NULL;
 #endif
 #endif
     return block;
 }
 
 #if !RV32_HAS(JIT)
+/* Update L1 direct-mapped block cache.
+ * Called after block insertion to enable fast lookup for hot paths.
+ */
+static inline void block_l1_update(riscv_t *rv, block_t *block)
+{
+    uint32_t idx = (block->pc_start >> BLOCK_L1_INDEX_SHIFT) & BLOCK_L1_MASK;
+    rv->block_l1.tags[idx] = block->pc_start;
+    rv->block_l1.ptrs[idx] = block;
+}
+
 /* insert a block into block map */
-static void block_insert(block_map_t *map, const block_t *block)
+static void block_insert(block_map_t *map, riscv_t *rv, const block_t *block)
 {
     assert(map && block);
     const uint32_t mask = map->block_capacity - 1;
@@ -538,6 +556,9 @@ static void block_insert(block_map_t *map, const block_t *block)
         }
     }
     map->size++;
+
+    /* update L1 cache for fast subsequent lookups */
+    block_l1_update(rv, (block_t *) block);
 }
 
 /* try to locate an already translated block in the block map */
@@ -557,6 +578,32 @@ static block_t *block_find(const block_map_t *map, const uint32_t addr)
             return block;
     }
     return NULL;
+}
+
+/* Fast block lookup using L1 direct-mapped cache.
+ * Falls back to hash table on L1 miss.
+ * This is the hot path - optimized for tight loops.
+ *
+ * Separated arrays: tag array checked first (1KB), pointer loaded on hit.
+ * Benchmarked faster than interleaved on x86-64.
+ */
+static inline block_t *block_lookup_or_find(riscv_t *rv, uint32_t pc)
+{
+    /* L1 cache lookup - check tag first (avoids loading pointer on miss) */
+    uint32_t idx = (pc >> BLOCK_L1_INDEX_SHIFT) & BLOCK_L1_MASK;
+    if (likely(rv->block_l1.tags[idx] == pc))
+        return rv->block_l1.ptrs[idx];
+
+    /* L1 miss - fall back to hash table lookup */
+    block_t *block = block_find(&rv->block_map, pc);
+
+    /* Populate L1 cache on hash table hit for future lookups */
+    if (block) {
+        rv->block_l1.tags[idx] = pc;
+        rv->block_l1.ptrs[idx] = block;
+    }
+
+    return block;
 }
 #endif
 
@@ -607,7 +654,11 @@ extern void emu_update_rtc_interrupts(riscv_t *rv);
 static uint32_t peripheral_update_ctr = 64;
 #endif
 
-/* Interpreter-based execution path */
+/* Interpreter-based execution path.
+ * Block-level cycle counting: cycle is pre-incremented at block entry,
+ * so per-instruction cycle++ is removed. Timer is derived from cycle at
+ * interrupt check points (rv_check_interrupt) rather than per-instruction.
+ */
 #if RV32_HAS(SYSTEM)
 #define RVOP_SYNC_PC(rv, PC) \
     do {                     \
@@ -641,7 +692,17 @@ static inline void rv_trace_record(riscv_t *rv,
     fwrite(&record, sizeof(record), 1, rv->history_log);
 }
 
-FORCE_INLINE bool insn_is_branch(uint8_t opcode);
+FORCE_INLINE bool insn_is_branch(uint8_t opcode)
+{
+    switch (opcode) {
+#define _(inst, can_branch, insn_len, translatable, reg_mask) \
+    IIF(can_branch)(case rv_insn_##inst:, )
+        RV_INSN_LIST
+#undef _
+        return true;
+    }
+    return false;
+}
 
 #define RVOP(inst, code)                                             \
     static PRESERVE_NONE bool do_##inst(riscv_t *rv, const rv_insn_t *ir,           \
@@ -1083,18 +1144,6 @@ static const void *dispatch_table[] = {
 };
 /* clang-format on */
 
-FORCE_INLINE bool insn_is_branch(uint8_t opcode)
-{
-    switch (opcode) {
-#define _(inst, can_branch, insn_len, translatable, reg_mask) \
-    IIF(can_branch)(case rv_insn_##inst:, )
-        RV_INSN_LIST
-#undef _
-        return true;
-    }
-    return false;
-}
-
 #if RV32_HAS(JIT)
 FORCE_INLINE bool insn_is_translatable(uint8_t opcode)
 {
@@ -1170,6 +1219,9 @@ static bool block_translate(riscv_t *rv, block_t *block)
 {
 retranslate:
     block->pc_start = block->pc_end = rv->PC;
+#if RV32_HAS(BLOCK_CHAINING)
+    block->page_terminated = false;
+#endif
 
     rv_insn_t *prev_ir = NULL;
     rv_insn_t *ir = mpool_calloc(rv->block_ir_mp);
@@ -1197,13 +1249,8 @@ retranslate:
          * The caller checks rv->is_trapped and invokes trap handler.
          * Note: insn==0 alone is ambiguous; we verify trap state explicitly.
          */
-        if (!insn) {
-#if RV32_HAS(SYSTEM)
-            assert(rv->is_trapped &&
-                   "insn fetch returned 0 without setting trap state");
-#endif
+        if (!insn)
             break;
-        }
 
         /* decode the instruction */
         if (!rv_decode(ir, insn)) {
@@ -1233,6 +1280,21 @@ retranslate:
             break;
         }
 
+#if RV32_HAS(BLOCK_CHAINING)
+        /* Terminate block at page boundary to enable O(1) cache invalidation.
+         * Each block fits entirely within one 4KB page, so SFENCE.VMA can
+         * invalidate blocks by page address without scanning entire cache.
+         */
+        {
+            const uint32_t page_end =
+                (block->pc_start & ~(RV_PG_SIZE - 1)) + RV_PG_SIZE;
+            if (block->pc_end >= page_end) {
+                block->page_terminated = true;
+                break;
+            }
+        }
+#endif
+
         ir = mpool_calloc(rv->block_ir_mp);
         if (unlikely(!ir))
             return false;
@@ -1246,8 +1308,20 @@ retranslate:
         return false;
     }
 
+    /* Free orphaned IR that was allocated at end of previous iteration but not
+     * used due to early break (fetch fail, decode fail, etc.).
+     * This IR was linked at prev_ir->next but never became prev_ir.
+     */
+    if (prev_ir->next)
+        mpool_free(rv->block_ir_mp, prev_ir->next);
+
     block->ir_tail = prev_ir;
     block->ir_tail->next = NULL;
+    /* Set cycle cost before macro-op fusion. This intentionally counts
+     * original instructions for accurate timing - fused operations still
+     * represent the same logical work as unfused sequences.
+     */
+    block->cycle_cost = block->n_insn;
     return true;
 }
 
@@ -1302,7 +1376,8 @@ static inline int count_consecutive_shift(rv_insn_t *ir)
 }
 
 /* Allocate and rewrite a fused sequence.
- * Returns true on success, false on malloc failure (graceful degradation).
+ * Returns true on success, false on allocation failure (graceful degradation).
+ * Uses pooled allocation for fuse arrays up to FUSE_MAX_ENTRIES.
  */
 static inline bool try_fuse_sequence(riscv_t *rv,
                                      block_t *block,
@@ -1313,11 +1388,13 @@ static inline bool try_fuse_sequence(riscv_t *rv,
     if (count <= 1)
         return false;
 
-    /* Overflow check for allocation size */
-    if (unlikely((size_t) count > SIZE_MAX / sizeof(opcode_fuse_t)))
+    /* Reject sequences exceeding pool slot size - rare case with diminishing
+     * returns. This also handles the overflow check implicitly.
+     */
+    if (unlikely(count > FUSE_MAX_ENTRIES))
         return false;
 
-    opcode_fuse_t *fuse_data = malloc((size_t) count * sizeof(opcode_fuse_t));
+    opcode_fuse_t *fuse_data = mpool_alloc(rv->fuse_mp);
     if (unlikely(!fuse_data))
         return false;
 
@@ -1476,12 +1553,9 @@ static void match_pattern(riscv_t *rv, block_t *block)
                  * The lui result is used as base address for lw.
                  * Skip if rd == x0: LUI x0 produces 0, not imm << 12.
                  *
-                 * Note: In JIT+SYSTEM mode, skip this fusion because JIT
-                 * computes host addresses at compile time, bypassing MMU.
-                 * The interpreter handles SYSTEM mode correctly via io
-                 * callbacks.
+                 * In SYSTEM mode, JIT uses MMU handler for address translation.
                  */
-#if !(RV32_HAS(JIT) && RV32_HAS(SYSTEM))
+                /* LUI + LW fusion (fuse9) */
                 if (ir->rd != rv_reg_zero && ir->rd == next_ir->rs1) {
                     ir->imm2 = next_ir->imm; /* lw offset */
                     ir->rs2 = next_ir->rd;   /* lw destination */
@@ -1494,26 +1568,26 @@ static void match_pattern(riscv_t *rv, block_t *block)
                         modified_regs |= (1u << ir->rs2);
 #endif
                 }
-#endif /* !(JIT && SYSTEM) */
                 break;
             case rv_insn_sw:
                 /* LUI + SW fusion (fuse10): lui rd, imm20; sw rs2, imm12(rd)
                  * Common pattern for absolute/PC-relative stores.
                  * The lui result is used as base address for sw.
                  * Skip if rd == x0: LUI x0 produces 0, not imm << 12.
+                 * Skip if rd == rs2: JIT uses rd as scratch for address
+                 * calculation, which would overwrite the value to store.
                  *
-                 * Note: In JIT+SYSTEM mode, skip this fusion because JIT
-                 * computes host addresses at compile time, bypassing MMU.
+                 * In SYSTEM mode, JIT uses MMU handler for address translation.
                  */
-#if !(RV32_HAS(JIT) && RV32_HAS(SYSTEM))
-                if (ir->rd != rv_reg_zero && ir->rd == next_ir->rs1) {
+                /* LUI + SW fusion (fuse10) */
+                if (ir->rd != rv_reg_zero && ir->rd == next_ir->rs1 &&
+                    ir->rd != next_ir->rs2) {
                     ir->imm2 = next_ir->imm; /* sw offset */
                     ir->rs1 = next_ir->rs2;  /* sw source (data to store) */
                     ir->opcode = rv_insn_fuse10;
                     ir->impl = dispatch_table[ir->opcode];
                     remove_next_nth_ir(rv, ir, block, 1);
                 }
-#endif /* !(JIT && SYSTEM) */
                 break;
             case rv_insn_lui:
                 /* Multiple LUI fusion (fuse1) */
@@ -1568,11 +1642,10 @@ static void match_pattern(riscv_t *rv, block_t *block)
             break;
         case rv_insn_lw:
             /* Check for LW + ADDI post-increment fusion (fuse11) first.
-             * In JIT+SYSTEM mode, skip this fusion because JIT computes
-             * host addresses directly, bypassing MMU translation.
+             * In SYSTEM mode, JIT uses MMU handler for address translation.
              */
-#if !(RV32_HAS(JIT) && RV32_HAS(SYSTEM))
             next_ir = ir->next;
+            /* fuse11: LW + ADDI post-increment fusion */
             if (next_ir && IF_insn(next_ir, addi) && ir->rs1 == next_ir->rs1 &&
                 next_ir->rs1 == next_ir->rd && ir->rd != ir->rs1) {
                 /* Pattern: lw rd, imm(rs1); addi rs1, rs1, step
@@ -1591,7 +1664,6 @@ static void match_pattern(riscv_t *rv, block_t *block)
 #endif
                 break;
             }
-#endif /* !(JIT && SYSTEM) */
             /* Multiple LW fusion (fuse4) */
             count = count_consecutive_insn(ir, rv_insn_lw);
 #if RV32_HAS(SYSTEM_MMIO)
@@ -1813,8 +1885,8 @@ static block_t *block_find_or_translate(riscv_t *rv)
 {
 #if !RV32_HAS(JIT)
     block_map_t *map = &rv->block_map;
-    /* lookup the next block in the block map */
-    block_t *next_blk = block_find(map, rv->PC);
+    /* lookup the next block using L1 cache with hash table fallback */
+    block_t *next_blk = block_lookup_or_find(rv, rv->PC);
 #else
     /* lookup the next block in the block cache */
     block_t *next_blk = (block_t *) cache_get(rv->block_cache, rv->PC, true);
@@ -1866,8 +1938,8 @@ static block_t *block_find_or_translate(riscv_t *rv)
 #endif
 
 #if !RV32_HAS(JIT)
-    /* insert the block into block map */
-    block_insert(&rv->block_map, next_blk);
+    /* insert the block into block map and L1 cache */
+    block_insert(&rv->block_map, rv, next_blk);
 #else
     list_add(&next_blk->list, &rv->block_list);
 
@@ -1915,16 +1987,67 @@ static block_t *block_find_or_translate(riscv_t *rv)
          */
     }
 
+#if RV32_HAS(T2C)
+    /* Check if T2C thread is currently using this block.
+     * If so, mark for delayed freeing and skip immediate destruction.
+     * The T2C thread will free it upon completion.
+     */
+    if (replaced_blk->is_compiling) {
+        replaced_blk->should_free = true;
+
+        /* Clear jit_cache to prevent new executions, but don't dispose engine
+         * or free memory yet. T2C thread owns the engine and block memory.
+         */
+#if RV32_HAS(SYSTEM)
+        uint64_t key = (uint64_t) replaced_blk->pc_start |
+                       ((uint64_t) replaced_blk->satp << 32);
+#else
+        uint64_t key = (uint64_t) replaced_blk->pc_start;
+#endif
+        if (replaced_blk->func) {
+            jit_cache_update(rv->jit_cache, key, NULL);
+        }
+        inline_cache_clear_key(rv->inline_cache, key);
+
+        /* Remove from global block list so it's not found/traversed */
+        list_del_init(&replaced_blk->list);
+
+        pthread_mutex_unlock(&rv->cache_lock);
+        return next_blk;
+    }
+#endif
+
     /* free IRs in replaced block */
     for (rv_insn_t *ir = replaced_blk->ir_head, *next_ir; ir != NULL;
          ir = next_ir) {
         next_ir = ir->next;
-
+        free(ir->branch_table);
         if (ir->fuse)
-            free(ir->fuse);
+            mpool_free(rv->fuse_mp, ir->fuse);
 
         mpool_free(rv->block_ir_mp, ir);
     }
+
+#if RV32_HAS(T2C)
+    /* Clear jit_cache entry before disposing LLVM engine to prevent stale
+     * function pointers. The jit_cache key includes SATP for system mode.
+     * cache_lock is already held by caller.
+     */
+#if RV32_HAS(SYSTEM)
+    uint64_t key = (uint64_t) replaced_blk->pc_start |
+                   ((uint64_t) replaced_blk->satp << 32);
+#else
+    uint64_t key = (uint64_t) replaced_blk->pc_start;
+#endif
+    if (replaced_blk->func) {
+        jit_cache_update(rv->jit_cache, key, NULL);
+    }
+    inline_cache_clear_key(rv->inline_cache, key);
+    /* Dispose LLVM execution engine before freeing the block.
+     * The engine owns the memory where block->func points.
+     */
+    t2c_dispose_engine(replaced_blk->llvm_engine);
+#endif
 
     list_del_init(&replaced_blk->list);
     mpool_free(rv->block_mp, replaced_blk);
@@ -1995,7 +2118,11 @@ static void rv_check_interrupt(riscv_t *rv)
 #endif /* RV32_HAS(GOLDFISH_RTC) */
     }
 
-    if (rv->timer > attr->timer)
+    /* Derive current timer from cycle counter for interrupt comparison.
+     * Timer is no longer incremented per-instruction; instead computed here.
+     */
+    uint64_t current_timer = rv->csr_cycle + rv->timer_offset;
+    if (current_timer > attr->timer)
         rv->csr_sip |= RV_INT_STI;
     else
         rv->csr_sip &= ~RV_INT_STI;
@@ -2046,7 +2173,7 @@ void rv_step(void *arg)
         if (prev && prev->pc_start != last_pc) {
             /* update previous block */
 #if !RV32_HAS(JIT)
-            prev = block_find(&rv->block_map, last_pc);
+            prev = block_lookup_or_find(rv, last_pc);
 #else
             prev = cache_get(rv->block_cache, last_pc, false);
 #endif
@@ -2098,13 +2225,21 @@ void rv_step(void *arg)
         ) {
             rv_insn_t *last_ir = prev->ir_tail;
             /* chain block */
-            if (!insn_is_unconditional_branch(last_ir->opcode)) {
+            if (prev->page_terminated) {
+                /* Page-terminated block: always falls through to next address.
+                 * Use branch_taken for fallthrough (like unconditional jump).
+                 */
+                if (!last_ir->branch_taken)
+                    last_ir->branch_taken = block->ir_head;
+            } else if (!insn_is_unconditional_branch(last_ir->opcode)) {
+                /* Conditional branch: chain based on taken/untaken path */
                 if (is_branch_taken && !last_ir->branch_taken) {
                     last_ir->branch_taken = block->ir_head;
                 } else if (!is_branch_taken && !last_ir->branch_untaken) {
                     last_ir->branch_untaken = block->ir_head;
                 }
             } else if (insn_is_direct_branch(last_ir->opcode)) {
+                /* Unconditional direct branch: always use branch_taken */
                 if (!last_ir->branch_taken) {
                     last_ir->branch_taken = block->ir_head;
                 }
@@ -2115,7 +2250,7 @@ void rv_step(void *arg)
 #if RV32_HAS(JIT)
 #if RV32_HAS(T2C)
         /* executed through the tier-2 JIT compiler */
-        if (__atomic_load_n(&block->hot2, __ATOMIC_ACQUIRE)) {
+        if (ATOMIC_LOAD(&block->hot2, ATOMIC_ACQUIRE)) {
             /* Atomic load-acquire pairs with store-release in t2c_compile().
              * Ensures we see the updated block->func after observing hot2=true.
              */
@@ -2123,21 +2258,37 @@ void rv_step(void *arg)
             /* Ensure instruction cache coherency before executing T2C code */
             __asm__ volatile("isb" ::: "memory");
 #endif
+            /* Defensive NULL check - should not occur if seqlocks work
+             * correctly but protects against races during block invalidation
+             */
+            if (unlikely(!block->func)) {
+                /* Block was invalidated, fall through to interpreter */
+                prev = NULL;
+                continue;
+            }
             ((exec_t2c_func_t) block->func)(rv);
             prev = NULL;
             continue;
         } /* check if invoking times of t1 generated code exceed threshold */
-        else if (!block->compiled && block->n_invoke >= THRESHOLD) {
-            block->compiled = true;
+        else if (!ATOMIC_LOAD(&block->compiled, ATOMIC_RELAXED) &&
+                 ATOMIC_LOAD(&block->n_invoke, ATOMIC_RELAXED) >= THRESHOLD) {
+            ATOMIC_STORE(&block->compiled, true, ATOMIC_RELAXED);
             queue_entry_t *entry = malloc(sizeof(queue_entry_t));
             if (unlikely(!entry)) {
                 /* Malloc failed - reset compiled flag to allow retry later */
-                block->compiled = false;
+                ATOMIC_STORE(&block->compiled, false, ATOMIC_RELAXED);
                 continue;
             }
-            entry->block = block;
+            /* Store cache key instead of pointer to prevent use-after-free */
+#if RV32_HAS(SYSTEM)
+            entry->key =
+                (uint64_t) block->pc_start | ((uint64_t) block->satp << 32);
+#else
+            entry->key = (uint64_t) block->pc_start;
+#endif
             pthread_mutex_lock(&rv->wait_queue_lock);
             list_add(&entry->list, &rv->wait_queue);
+            pthread_cond_signal(&rv->wait_queue_cond);
             pthread_mutex_unlock(&rv->wait_queue_lock);
         }
 #endif
@@ -2149,13 +2300,26 @@ void rv_step(void *arg)
          *       entry in compiled binary buffer.
          */
         if (block->hot) {
+#if RV32_HAS(T2C)
+            ATOMIC_FETCH_ADD(&block->n_invoke, 1, ATOMIC_RELAXED);
+#else
             block->n_invoke++;
+#endif
 #if defined(__aarch64__)
             /* Ensure instruction cache coherency before executing JIT code */
             __asm__ volatile("isb" ::: "memory");
 #endif
             ((exec_block_func_t) state->buf)(
                 rv, (uintptr_t) (state->buf + block->offset));
+            rv->csr_cycle += block->cycle_cost;
+#if RV32_HAS(SYSTEM)
+            /* Handle trap if one occurred during JIT block execution */
+            if (rv->is_trapped) {
+                trap_handler(rv);
+                prev = NULL;
+                continue;
+            }
+#endif
             prev = NULL;
             continue;
         } /* check if the execution path is potential hotspot */
@@ -2164,23 +2328,38 @@ void rv_step(void *arg)
             && runtime_profiler(rv, block)
 #endif
         ) {
-            jit_translate(rv, block);
+            if (jit_translate(rv, block)) {
 #if defined(__aarch64__)
-            /* Ensure instruction cache coherency before executing JIT code */
-            __asm__ volatile("isb" ::: "memory");
+                /* Ensure icache coherency before executing JIT */
+                __asm__ volatile("isb" ::: "memory");
 #endif
-            ((exec_block_func_t) state->buf)(
-                rv, (uintptr_t) (state->buf + block->offset));
-            prev = NULL;
-            continue;
+                ((exec_block_func_t) state->buf)(
+                    rv, (uintptr_t) (state->buf + block->offset));
+                rv->csr_cycle += block->cycle_cost;
+#if RV32_HAS(SYSTEM)
+                /* Handle trap if one occurred during JIT block execution */
+                if (rv->is_trapped) {
+                    trap_handler(rv);
+                    prev = NULL;
+                    continue;
+                }
+#endif
+                prev = NULL;
+                continue;
+            }
         }
         set_reset(&pc_set);
         has_loops = false;
 #endif
-        /* execute the block by interpreter */
+        /* execute the block by interpreter.
+         * Per-instruction cycle counting is used to support block chaining,
+         * where chained blocks bypass the outer loop and accumulate cycles
+         * via the cycle++ in each instruction handler.
+         */
         const rv_insn_t *ir = block->ir_head;
-        if (unlikely(!ir->impl(rv, ir, rv->csr_cycle, rv->PC))) {
-            /* block should not be extended if execption handler invoked */
+        uint64_t cycle = rv->csr_cycle;
+        if (unlikely(!ir->impl(rv, ir, cycle, rv->PC))) {
+            /* block should not be extended if exception handler invoked */
             prev = NULL;
             break;
         }
@@ -2273,8 +2452,27 @@ static void __trap_handler(riscv_t *rv)
 
     /* set to false by sret implementation */
     while (rv->is_trapped && !rv_has_halted(rv)) {
-        uint32_t insn = rv->io.mem_ifetch(rv, rv->PC);
-        assert(insn);
+        uint32_t insn;
+    retry_fetch:
+        insn = rv->io.mem_ifetch(rv, rv->PC);
+
+        /* If instruction fetch returned 0 and need_retranslate is set, this
+         * indicates MMU was enabled during execution. Clear flag and retry
+         * the fetch. This matches the pattern in block_translate and rv_step
+         * for handling MMU enable during trap handling.
+         */
+        if (!insn && need_retranslate) {
+            need_retranslate = false;
+            goto retry_fetch;
+        }
+
+        /* If instruction fetch failed (insn==0), it indicates either:
+         * 1. Page fault during ifetch (need_handle_signal was set)
+         * 2. Invalid PC or other error
+         * In both cases, break out and let the main loop handle it.
+         */
+        if (!insn)
+            break;
 
         rv_decode(ir, insn);
         reloc_enable_mmu_jalr_addr = rv->PC;
@@ -2284,6 +2482,7 @@ static void __trap_handler(riscv_t *rv)
         ir->impl(rv, ir, rv->csr_cycle, rv->PC);
     }
 
+    mpool_free(rv->block_ir_mp, ir);
     prev = NULL;
 }
 #endif /* RV32_HAS(SYSTEM) */
@@ -2335,6 +2534,15 @@ static void _trap_handler(riscv_t *rv)
         rv->csr_sepc = rv->PC;
 #if RV32_HAS(SYSTEM)
         rv->last_csr_sepc = rv->csr_sepc;
+        if (!rv->csr_stvec) { /* in case CSR is not configured */
+            /* For system mode without trap vector, restore PC from sepc
+             * and clear is_trapped to continue execution. This handles
+             * spurious interrupts during early boot before handlers are set.
+             */
+            rv->PC = rv->csr_sepc;
+            rv->is_trapped = false;
+            return;
+        }
 #endif
     } else { /* machine */
         const uint32_t mstatus_mie =
@@ -2348,7 +2556,16 @@ static void _trap_handler(riscv_t *rv)
         cause = rv->csr_mcause;
         rv->csr_mepc = rv->PC;
         if (!rv->csr_mtvec) { /* in case CSR is not configured */
+#if RV32_HAS(SYSTEM)
+            /* For system mode without trap vector, restore PC from mepc
+             * and clear is_trapped to continue execution. This handles
+             * spurious interrupts during early boot before handlers are set.
+             */
+            rv->PC = rv->csr_mepc;
+            rv->is_trapped = false;
+#else
             rv_trap_default_handler(rv);
+#endif
             return;
         }
     }

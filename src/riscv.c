@@ -71,7 +71,8 @@ void block_map_clear(riscv_t *rv)
         rv_insn_t *ir, *next;
         for (idx = 0, ir = block->ir_head; idx < block->n_insn;
              idx++, ir = next) {
-            free(ir->fuse);
+            if (ir->fuse)
+                mpool_free(rv->fuse_mp, ir->fuse);
             free(ir->branch_table);
             next = ir->next;
             mpool_free(rv->block_ir_mp, ir);
@@ -80,6 +81,14 @@ void block_map_clear(riscv_t *rv)
         map->map[i] = NULL;
     }
     map->size = 0;
+
+    /* clear L1 direct-mapped block cache - use invalid tags to avoid
+     * false hits on PC=0 edge case. Separated arrays: tags first for
+     * cache-efficient miss detection, ptrs zeroed with memset.
+     */
+    for (int i = 0; i < BLOCK_L1_SIZE; i++)
+        rv->block_l1.tags[i] = BLOCK_L1_INVALID_TAG;
+    memset(rv->block_l1.ptrs, 0, sizeof(rv->block_l1.ptrs));
 }
 
 static void block_map_destroy(riscv_t *rv)
@@ -89,6 +98,7 @@ static void block_map_destroy(riscv_t *rv)
 
     mpool_destroy(rv->block_mp);
     mpool_destroy(rv->block_ir_mp);
+    mpool_destroy(rv->fuse_mp);
 }
 #endif
 
@@ -207,26 +217,52 @@ static pthread_t t2c_thread;
 static void *t2c_runloop(void *arg)
 {
     riscv_t *rv = (riscv_t *) arg;
+    pthread_mutex_lock(&rv->wait_queue_lock);
     while (!rv->quit) {
-        queue_entry_t *entry = NULL;
+        /* Wait for work or quit signal */
+        while (list_empty(&rv->wait_queue) && !rv->quit)
+            pthread_cond_wait(&rv->wait_queue_cond, &rv->wait_queue_lock);
 
-        /* Acquire lock before checking and accessing the queue to prevent
-         * race conditions with the main thread adding entries.
-         */
-        pthread_mutex_lock(&rv->wait_queue_lock);
-        if (!list_empty(&rv->wait_queue)) {
-            entry = list_last_entry(&rv->wait_queue, queue_entry_t, list);
-            list_del_init(&entry->list);
-        }
+        if (rv->quit)
+            break;
+
+        /* Extract work item while holding the lock */
+        queue_entry_t *entry =
+            list_last_entry(&rv->wait_queue, queue_entry_t, list);
+        list_del_init(&entry->list);
         pthread_mutex_unlock(&rv->wait_queue_lock);
 
-        if (entry) {
-            pthread_mutex_lock(&rv->cache_lock);
-            t2c_compile(rv, entry->block);
+        /* Perform compilation with minimal lock contention.
+         *
+         * Lock strategy: Hold cache_lock only when accessing shared data:
+         * 1. Initial lookup and validation (short)
+         * 2. Final jit_cache update (short)
+         *
+         * The expensive LLVM compilation runs without holding cache_lock,
+         * allowing SFENCE.VMA/FENCE.I to proceed with minimal latency.
+         * If the block is invalidated during compilation, we detect this
+         * via the invalidated flag and discard the compiled result.
+         */
+        pthread_mutex_lock(&rv->cache_lock);
+        /* Look up block from cache using the key (might have been evicted) */
+        uint32_t pc = (uint32_t) entry->key;
+        block_t *block = (block_t *) cache_get(rv->block_cache, pc, false);
+#if RV32_HAS(SYSTEM)
+        /* Verify SATP matches (for system mode) */
+        uint32_t satp = (uint32_t) (entry->key >> 32);
+        if (block && block->satp != satp)
+            block = NULL;
+#endif
+        /* Compile only if block still exists in cache */
+        if (block)
+            t2c_compile(rv, block, &rv->cache_lock);
+        else
             pthread_mutex_unlock(&rv->cache_lock);
-            free(entry);
-        }
+        free(entry);
+
+        pthread_mutex_lock(&rv->wait_queue_lock);
     }
+    pthread_mutex_unlock(&rv->wait_queue_lock);
     return NULL;
 }
 #endif
@@ -674,10 +710,16 @@ riscv_t *rv_create(riscv_user_t rv_attr)
 #if !RV32_HAS(SYSTEM)
     /* set not exiting */
     attr->on_exit = false;
+    attr->exit_addr = 0;
 
-    const struct Elf32_Sym *exit;
-    if ((exit = elf_get_symbol(elf, "exit")))
-        attr->exit_addr = exit->st_value;
+    /* Try to find exit address from symbols. Check multiple names since
+     * different toolchains/libc implementations may use different symbols.
+     */
+    const struct Elf32_Sym *exit_sym;
+    if ((exit_sym = elf_get_symbol(elf, "exit")))
+        attr->exit_addr = exit_sym->st_value;
+    else if ((exit_sym = elf_get_symbol(elf, "_exit")))
+        attr->exit_addr = exit_sym->st_value;
 #endif
 
     assert(elf_load(elf, attr->mem));
@@ -796,9 +838,9 @@ riscv_t *rv_create(riscv_user_t rv_attr)
     assert(attr->rtc);
 #endif /* RV32_HAS(GOLDFISH_RTC) */
 
-    attr->vblk = malloc(sizeof(virtio_blk_state_t *) * attr->vblk_cnt);
+    attr->vblk = calloc(attr->vblk_cnt, sizeof(virtio_blk_state_t *));
     assert(attr->vblk);
-    attr->disk = malloc(sizeof(uint32_t *) * attr->vblk_cnt);
+    attr->disk = calloc(attr->vblk_cnt, sizeof(uint32_t *));
     assert(attr->disk);
 
     if (attr->vblk_cnt) {
@@ -884,10 +926,24 @@ riscv_t *rv_create(riscv_user_t rv_attr)
                                 sizeof(block_t));
     rv->block_ir_mp = mpool_create(
         sizeof(rv_insn_t) << BLOCK_IR_MAP_CAPACITY_BITS, sizeof(rv_insn_t));
+    /* Fuse pool: fixed-size slots for macro-op fusion arrays.
+     * Each slot holds up to FUSE_MAX_ENTRIES opcode_fuse_t structures.
+     */
+    rv->fuse_mp = mpool_create(FUSE_SLOT_SIZE << BLOCK_IR_MAP_CAPACITY_BITS,
+                               FUSE_SLOT_SIZE);
+    if (!rv->block_mp || !rv->block_ir_mp || !rv->fuse_mp) {
+        rv_log_fatal("Failed to create memory pool");
+        goto fail_mpool;
+    }
 
 #if !RV32_HAS(JIT)
     /* initialize the block map */
     block_map_init(&rv->block_map, BLOCK_MAP_CAPACITY_BITS);
+
+    /* initialize L1 block cache with invalid tags */
+    for (int i = 0; i < BLOCK_L1_SIZE; i++)
+        rv->block_l1.tags[i] = BLOCK_L1_INVALID_TAG;
+    memset(rv->block_l1.ptrs, 0, sizeof(rv->block_l1.ptrs));
 #else
     INIT_LIST_HEAD(&rv->block_list);
     rv->jit_state = jit_state_init(CODE_CACHE_SIZE);
@@ -907,12 +963,25 @@ riscv_t *rv_create(riscv_user_t rv_attr)
         rv_log_fatal("Failed to initialize JIT cache");
         goto fail_jit_cache;
     }
+    rv->inline_cache = inline_cache_init();
+    if (!rv->inline_cache) {
+        rv_log_fatal("Failed to initialize inline cache");
+        goto fail_inline_cache;
+    }
     /* prepare wait queue. */
     pthread_mutex_init(&rv->wait_queue_lock, NULL);
     pthread_mutex_init(&rv->cache_lock, NULL);
+    pthread_cond_init(&rv->wait_queue_cond, NULL);
     INIT_LIST_HEAD(&rv->wait_queue);
-    /* activate the background compilation thread. */
-    pthread_create(&t2c_thread, NULL, t2c_runloop, rv);
+    /* Activate the background compilation thread.
+     * Use larger stack (8MB) to handle deep recursion in t2c_trace_ebb
+     * and LLVM's internal stack usage during compilation.
+     */
+    pthread_attr_t t2c_attr;
+    pthread_attr_init(&t2c_attr);
+    pthread_attr_setstacksize(&t2c_attr, 8 * 1024 * 1024); /* 8MB stack */
+    pthread_create(&t2c_thread, &t2c_attr, t2c_runloop, rv);
+    pthread_attr_destroy(&t2c_attr);
 #endif
 #endif
 
@@ -920,6 +989,8 @@ riscv_t *rv_create(riscv_user_t rv_attr)
 
 #if RV32_HAS(JIT)
 #if RV32_HAS(T2C)
+fail_inline_cache:
+    jit_cache_exit(rv->jit_cache);
 fail_jit_cache:
     cache_free(rv->block_cache);
 #endif
@@ -927,13 +998,33 @@ fail_block_cache:
     if (rv->jit_state)
         jit_state_exit(rv->jit_state);
 fail_jit_state:
+#endif
+fail_mpool:
     mpool_destroy(rv->block_ir_mp);
     mpool_destroy(rv->block_mp);
+    mpool_destroy(rv->fuse_mp);
+#if RV32_HAS(SYSTEM_MMIO)
+    if (attr->uart)
+        u8250_delete(attr->uart);
+    if (attr->plic)
+        plic_delete(attr->plic);
+#if RV32_HAS(GOLDFISH_RTC)
+    if (attr->rtc)
+        rtc_delete(attr->rtc);
+#endif
+    if (attr->vblk) {
+        for (int i = 0; i < attr->vblk_cnt; i++) {
+            if (attr->vblk[i])
+                vblk_delete(attr->vblk[i]);
+        }
+        free(attr->vblk);
+    }
+    free(attr->disk);
+#endif
     map_delete(attr->fd_map);
     memory_delete(attr->mem);
     free(rv);
     return NULL;
-#endif
 }
 
 #if !RV32_HAS(SYSTEM_MMIO)
@@ -1031,26 +1122,59 @@ void rv_set_fromhost_addr(riscv_t *rv, uint32_t addr)
 }
 #endif
 
+#if RV32_HAS(JIT)
+static void free_block_branch_tables(void *block)
+{
+    assert(block);
+    block_t *blk = (block_t *) block;
+    for (rv_insn_t *ir = blk->ir_head; ir; ir = ir->next)
+        free(ir->branch_table);
+}
+#endif
+
 void rv_delete(riscv_t *rv)
 {
     assert(rv);
-#if !RV32_HAS(JIT) || (RV32_HAS(SYSTEM_MMIO))
     vm_attr_t *attr = PRIV(rv);
-#endif
 #if !RV32_HAS(JIT)
     map_delete(attr->fd_map);
     memory_delete(attr->mem);
     block_map_destroy(rv);
 #else
 #if RV32_HAS(T2C)
+    /* Signal the thread to quit */
+    pthread_mutex_lock(&rv->wait_queue_lock);
     rv->quit = true;
+    pthread_cond_signal(&rv->wait_queue_cond);
+    pthread_mutex_unlock(&rv->wait_queue_lock);
+
     pthread_join(t2c_thread, NULL);
+
+    /* Clean up any remaining entries in wait queue */
+    queue_entry_t *entry, *safe;
+    list_for_each_entry_safe (entry, safe, &rv->wait_queue, list) {
+        list_del(&entry->list);
+        free(entry);
+    }
+
     pthread_mutex_destroy(&rv->wait_queue_lock);
     pthread_mutex_destroy(&rv->cache_lock);
+    pthread_cond_destroy(&rv->wait_queue_cond);
     jit_cache_exit(rv->jit_cache);
+    inline_cache_exit(rv->inline_cache);
+
+    /* Dispose LLVM engines for all remaining blocks before freeing cache */
+    clear_cache_hot(rv->block_cache, t2c_dispose_block_engine);
 #endif
+    /* Free branch tables for all remaining blocks before freeing cache */
+    clear_cache_hot(rv->block_cache, free_block_branch_tables);
     jit_state_exit(rv->jit_state);
     cache_free(rv->block_cache);
+    mpool_destroy(rv->block_ir_mp);
+    mpool_destroy(rv->block_mp);
+    mpool_destroy(rv->fuse_mp);
+    map_delete(attr->fd_map);
+    memory_delete(attr->mem);
 #endif
 #if RV32_HAS(SYSTEM_MMIO)
     u8250_delete(attr->uart);
@@ -1076,9 +1200,11 @@ void rv_reset(riscv_t *rv, riscv_word_t pc)
     memset(rv->X, 0, sizeof(uint32_t) * N_RV_REGS);
 
     vm_attr_t *attr = PRIV(rv);
+#if !RV32_HAS(SYSTEM_MMIO)
     int argc = attr->argc;
     char **args = attr->argv;
     memory_t *mem = attr->mem;
+#endif
 
     /* set the reset address */
     rv->PC = pc;
@@ -1087,9 +1213,8 @@ void rv_reset(riscv_t *rv, riscv_word_t pc)
     rv->X[rv_reg_sp] =
         attr->mem_size - attr->stack_size - attr->args_offset_size;
 
-    /* Store 'argc' and 'args' of the target program in 'state->mem'. Thus,
-     * we can use an offset trick to emulate 32/64-bit target programs on
-     * a 64-bit built emulator.
+    /* User-mode: Store 'argc' and 'args' of the target program in 'state->mem'.
+     * System-mode: Skip this - kernel boot doesn't use argc/argv.
      *
      * memory layout of arguments as below:
      * -----------------------
@@ -1118,7 +1243,7 @@ void rv_reset(riscv_t *rv, riscv_word_t pc)
      *
      * TODO: access to envp
      */
-
+#if !RV32_HAS(SYSTEM_MMIO)
     /* copy args to RAM */
     uintptr_t args_size = (1 + argc + 1) * sizeof(uint32_t);
     uintptr_t args_bottom = attr->mem_size - attr->stack_size;
@@ -1175,6 +1300,7 @@ void rv_reset(riscv_t *rv, riscv_word_t pc)
 
     /* reset sp pointing to argc */
     rv->X[rv_reg_sp] = stack_top;
+#endif /* !RV32_HAS(SYSTEM_MMIO) */
 
     /* reset privilege mode */
 #if RV32_HAS(SYSTEM)
@@ -1201,6 +1327,9 @@ void rv_reset(riscv_t *rv, riscv_word_t pc)
     /* reset the csrs */
     rv->csr_mtvec = 0;
     rv->csr_cycle = 0;
+#if RV32_HAS(SYSTEM)
+    rv->timer_offset = 0;
+#endif
     rv->csr_mstatus = 0;
     rv->csr_misa |= MISA_SUPER | MISA_USER;
     rv->csr_mvendorid = RV_MVENDORID;
